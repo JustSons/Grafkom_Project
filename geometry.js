@@ -365,3 +365,239 @@ function generateBezierSweep(P0, P1, P2, P3,
 
     return { vertices: buildVertices(positions, color, normals), indices: indices };
 }
+
+// ─────────────────────────────────────────────────────────
+// 6. BEZIER DUCK TAIL (Ekor Baji Bebek Berbasis Kurva Bezier 3D)
+//    Membentuk badan belakang & ekor yang menyatu mulus (bukan batang).
+//    Menggunakan 2 kurva Bezier 3D (dorsal/atas & ventral/bawah)
+//    yang disapu ke belakang & melengkung anggun ke atas.
+// ─────────────────────────────────────────────────────────
+function generateBezierDuckTail(T, B, baseWidth, tipWidth, segments, slices, color) {
+    var positions = [];
+    var normals   = [];
+    var indices   = [];
+    var grid      = []; // 2D grid [segments+1][slices+1]
+
+    for (var i = 0; i <= segments; i++) {
+        var t = i / segments;
+        var ptTop = bezierCubic(T[0], T[1], T[2], T[3], t);
+        var ptBot = bezierCubic(B[0], B[1], B[2], B[3], t);
+
+        // Center spine dan vektor tinggi cross-section
+        var midX = (ptTop[0] + ptBot[0]) * 0.5;
+        var midY = (ptTop[1] + ptBot[1]) * 0.5;
+        var midZ = (ptTop[2] + ptBot[2]) * 0.5;
+
+        var hy = (ptTop[1] - ptBot[1]) * 0.5;
+        var hz = (ptTop[2] - ptBot[2]) * 0.5;
+
+        // Lebar melintang (X): montok di pangkal badan, tebal di tengah, menyatu anggun ke ujung
+        var w = baseWidth * Math.pow(1.0 - t, 0.55) + tipWidth * t;
+
+        var row = [];
+        for (var j = 0; j <= slices; j++) {
+            var theta = (j / slices) * 2 * Math.PI;
+            var cosT  = Math.cos(theta); // arah lebar (X)
+            var sinT  = Math.sin(theta); // arah tinggi (Y-Z)
+
+            var x = midX + w * cosT;
+            var y = midY + hy * sinT;
+            var z = midZ + hz * sinT;
+
+            row.push([x, y, z]);
+        }
+        grid.push(row);
+    }
+
+    // Hitung posisi dan normal grid yang halus dari cross product
+    for (var i = 0; i <= segments; i++) {
+        for (var j = 0; j <= slices; j++) {
+            positions.push(grid[i][j]);
+
+            var i0 = Math.max(0, i - 1);
+            var i1 = Math.min(segments, i + 1);
+            var j0 = (j - 1 + slices) % slices;
+            var j1 = (j + 1) % slices;
+
+            var du = [
+                grid[i1][j][0] - grid[i0][j][0],
+                grid[i1][j][1] - grid[i0][j][1],
+                grid[i1][j][2] - grid[i0][j][2]
+            ];
+            var dv = [
+                grid[i][j1][0] - grid[i][j0][0],
+                grid[i][j1][1] - grid[i][j0][1],
+                grid[i][j1][2] - grid[i][j0][2]
+            ];
+
+            var nx = du[1]*dv[2] - du[2]*dv[1];
+            var ny = du[2]*dv[0] - du[0]*dv[2];
+            var nz = du[0]*dv[1] - du[1]*dv[0];
+            var nlen = Math.sqrt(nx*nx + ny*ny + nz*nz);
+            if (nlen < 1e-6) {
+                normals.push([0, 1, 0]);
+            } else {
+                normals.push([nx / nlen, ny / nlen, nz / nlen]);
+            }
+        }
+    }
+
+    // Grid indices
+    for (var i = 0; i < segments; i++) {
+        for (var j = 0; j < slices; j++) {
+            var a0 = i * (slices + 1) + j;
+            var a1 = a0 + 1;
+            var b0 = a0 + (slices + 1);
+            var b1 = b0 + 1;
+            indices.push(a0, a1, b1,  a0, b1, b0);
+        }
+    }
+
+    // Penutup pangkal di t=0 (berada di dalam badan)
+    var centerIndex = positions.length;
+    var baseMidX = (T[0][0] + B[0][0]) * 0.5;
+    var baseMidY = (T[0][1] + B[0][1]) * 0.5;
+    var baseMidZ = (T[0][2] + B[0][2]) * 0.5;
+    positions.push([baseMidX, baseMidY, baseMidZ]);
+    normals.push([0, 0, 1]); // mengarah ke dalam badan (+Z)
+
+    for (var j = 0; j < slices; j++) {
+        indices.push(centerIndex, j + 1, j);
+    }
+
+    // Penutup ujung di t=1 (tip ekor) - berbentuk jentikan runcing membulat
+    var tipCenterIndex = positions.length;
+    var tipMidX = (T[3][0] + B[3][0]) * 0.5;
+    var tipMidY = (T[3][1] + B[3][1]) * 0.5;
+    var tipMidZ = (T[3][2] + B[3][2]) * 0.5 - 0.02;
+    positions.push([tipMidX, tipMidY, tipMidZ]);
+    normals.push([0, 0.55, -0.83]); // mengarah ke belakang-atas melengkung
+
+    var tipRingStart = segments * (slices + 1);
+    for (var j = 0; j < slices; j++) {
+        indices.push(tipCenterIndex, tipRingStart + j, tipRingStart + j + 1);
+    }
+
+    return { vertices: buildVertices(positions, color, normals), indices: indices };
+}
+
+/** Evaluasi titik 1D pada kurva Bezier kubik */
+function bezierCubic1D(p0, p1, p2, p3, t) {
+    var mt  = 1 - t;
+    var mt2 = mt * mt;
+    var mt3 = mt2 * mt;
+    var t2  = t * t;
+    var t3  = t2 * t;
+    return mt3*p0 + 3*mt2*t*p1 + 3*mt*t2*p2 + t3*p3;
+}
+
+// ─────────────────────────────────────────────────────────
+// 7. SEAMLESS DUCK BODY WITH BEZIER TAIL
+//    Satu kesatuan mesh utuh (100% tanpa sambungan/seam)
+//    di mana badan belakang mengalir mulus menjentik menjadi ekor
+//    berdasarkan kurva Bezier 3D, persis seperti miniatur figurine.
+// ─────────────────────────────────────────────────────────
+function generateDuckBodyWithBezierTail(a, b, c, stacks, slices, color) {
+    var grid = []; // 2D array [stacks+1][slices+1] of [x, y, z]
+
+    for (var i = 0; i <= stacks; i++) {
+        var u = i / stacks; // 0 (bawah) s.d. 1 (leher atas)
+        var phi = u * Math.PI - Math.PI / 2; // -pi/2 s.d. +pi/2
+        var sinPhi = Math.sin(phi);
+        var cosPhi = Math.cos(phi);
+
+        // Sedikit lebih ramping di leher atas, buncit di perut bawah
+        var effA = a * (1.0 - 0.12 * Math.max(0.0, sinPhi));
+        var effB = b;
+        var effC = c;
+
+        // Kontrol profil ekor berbasis kurva Bezier kubik dengan puncak lancip (cusp)
+        // Aktif dari u=0.18 (dasar panggul belakang) s.d. u=0.82 (punggung atas)
+        var tailFactor = 0;
+        if (u >= 0.18 && u <= 0.82) {
+            var tu = (u - 0.18) / (0.82 - 0.18); // parameter t in [0, 1]
+            var peakU = 0.58; // posisi puncak ekor
+            if (tu <= peakU) {
+                // Busur bawah: menyapu naik ke puncak
+                var s = tu / peakU;
+                tailFactor = bezierCubic1D(0.0, 0.15, 0.65, 1.0, s);
+            } else {
+                // Busur atas: melandai anggun ke punggung
+                var s = (1.0 - tu) / (1.0 - peakU);
+                tailFactor = bezierCubic1D(0.0, 0.18, 0.70, 1.0, s);
+            }
+        }
+
+        var row = [];
+        for (var j = 0; j <= slices; j++) {
+            var theta = j / slices * 2 * Math.PI - Math.PI; // -pi s.d. +pi
+            var cosT  = Math.cos(theta); // +1 di depan (+Z), -1 di belakang (-Z)
+            var sinT  = Math.sin(theta); // samping (+X / -X)
+
+            var x = effA * sinT * cosPhi;
+            var y = effB * sinPhi;
+            var z = effC * cosT * cosPhi;
+
+            // Di bagian belakang (cosT < 0), tarik permukaan menyatu membentuk ekor
+            if (cosT < 0 && tailFactor > 0) {
+                var backAmt = -cosT; // 0 di samping, 1 di garis tengah belakang
+                // Baji ekor: memusat tajam di punggung tengah belakang membentuk ujung lancip
+                var keel = Math.pow(backAmt, 3.2);
+
+                // Ekstensi keluar ke belakang (-Z) dan angkat ke atas (+Y)
+                var extZ = 0.78 * tailFactor * keel;
+                var extY = 0.46 * tailFactor * keel;
+
+                z -= extZ;
+                y += extY;
+            }
+
+            row.push([x, y, z]);
+        }
+        grid.push(row);
+    }
+
+    // Hitung vektor normal analitik halus dari cross product grid
+    var positions = [];
+    var normals   = [];
+    var indices   = [];
+
+    for (var i = 0; i <= stacks; i++) {
+        for (var j = 0; j <= slices; j++) {
+            var p = grid[i][j];
+            positions.push(p);
+
+            var iPrev = Math.max(0, i - 1);
+            var iNext = Math.min(stacks, i + 1);
+            var du = [
+                grid[iNext][j][0] - grid[iPrev][j][0],
+                grid[iNext][j][1] - grid[iPrev][j][1],
+                grid[iNext][j][2] - grid[iPrev][j][2]
+            ];
+
+            var jPrev = (j - 1 + slices) % slices;
+            var jNext = (j + 1) % slices;
+            var dv = [
+                grid[i][jNext][0] - grid[i][jPrev][0],
+                grid[i][jNext][1] - grid[i][jPrev][1],
+                grid[i][jNext][2] - grid[i][jPrev][2]
+            ];
+
+            var n = cross3(dv, du);
+            normals.push(normalize3(n));
+        }
+    }
+
+    // Indeks segitiga
+    for (var i = 0; i < stacks; i++) {
+        for (var j = 0; j < slices; j++) {
+            var a0 = i * (slices + 1) + j;
+            var a1 = a0 + 1;
+            var b0 = a0 + (slices + 1);
+            var b1 = b0 + 1;
+            indices.push(a0, a1, b1,  a0, b1, b0);
+        }
+    }
+
+    return { vertices: buildVertices(positions, color, normals), indices: indices };
+}

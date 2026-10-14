@@ -3,7 +3,7 @@
  * 
  * Karakter anak ayam pemangsa kuning (Apex Predator):
  * - Memenuhi syarat akademis:
- *   1. Kurva 3D: Bezier Sweep 3D kubik untuk ekor (tail) yang melengkung ke atas.
+ *   1. Kurva 3D: Bezier Duck Tail (Kurva Bezier 3D kubik dorsal & ventral untuk ekor bebek bervolume).
  *   2. Tiga+ jenis Quadratic Object berbeda:
  *      - Ellipsoid          : Badan, kepala (tapered dome), mata, lengan, telapak & jari kaki
  *      - Elliptic Paraboloid: Paruh atas & paruh bawah (beak)
@@ -50,18 +50,16 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
     //  1. BADAN (BODY) — Quadric: ELLIPSOID
     // ══════════════════════════════════════════════════════════════
     var body = mkNode();
-    // Badan agak membulat pir (tapered di atas, mengembang di bawah)
-    body.setGeometry(generateEllipsoid(0.96, 1.04, 0.90, 28, 40, C.body, 0.18, -0.10));
+    body.setGeometry(generateEllipsoid(0.96, 1.04, 0.90, 28, 40, C.body, 0.16, -0.10));
     ty(body, 0.15);
 
-    // Perut buncit (area depan menonjol membulat lembut)
+    // Perut buncit depan
     var belly = mkNode();
     belly.setGeometry(generateEllipsoid(0.74, 0.80, 0.52, 22, 32, C.belly));
     pos(belly, 0, -0.15, 0.44);
 
     // ══════════════════════════════════════════════════════════════
     //  2. KEPALA (HEAD) — Quadric: ELLIPSOID + CONE CREST
-    //     Kubah kepala mengerucut mulus di atas (taperTop = 0.28)
     // ══════════════════════════════════════════════════════════════
     var head = mkNode();
     head.setGeometry(generateEllipsoid(1.08, 1.15, 1.02, 32, 44, C.body, 0.28, -0.08));
@@ -114,12 +112,11 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
     // ══════════════════════════════════════════════════════════════
     //  5. TARING (FANGS) — Quadric: CONE (Mengarah tajam ke tengah)
     // ══════════════════════════════════════════════════════════════
-    // Taring atas: meruncing ke bawah (arah -Y)
     var fangUL = mkNode();
     fangUL.setGeometry(generateCone(0.055, 0.25, 10, C.fang));
     fangUL.visible = false;
     pos(fangUL, -0.18, 0.02, -0.10);
-    rx(fangUL, Math.PI); // putar 180 derajat agar tip mengarah ke bawah
+    rx(fangUL, Math.PI);
 
     var fangUR = mkNode();
     fangUR.setGeometry(generateCone(0.055, 0.25, 10, C.fang));
@@ -127,7 +124,6 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
     pos(fangUR, 0.18, 0.02, -0.10);
     rx(fangUR, Math.PI);
 
-    // Taring bawah: meruncing ke atas (arah +Y)
     var fangLL = mkNode();
     fangLL.setGeometry(generateCone(0.045, 0.22, 10, C.fang));
     fangLL.visible = false;
@@ -149,10 +145,7 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
 
     // ══════════════════════════════════════════════════════════════
     //  6. SAYAP / LENGAN (ARMS / WINGS) — Quadric: ELLIPSOID
-    //     Bentuk sayap memipih mengikuti lambung samping, dengan
-    //     3 gerigi bulu/jari pada tepi bawah-belakang sesuai game
     // ══════════════════════════════════════════════════════════════
-    // ──── Lengan Kiri ────
     var wingL = mkNode();
     wingL.setGeometry(generateEllipsoid(0.18, 0.44, 0.30, 14, 22, C.arm));
     pos(wingL, -0.88, -0.06, 0.04);
@@ -160,7 +153,6 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
     rx(wingL, 0.28);
     ry(wingL, 0.12);
 
-    // 3 ujung bulu / jari lengan kiri di tepi belakang menonjol keluar jelas
     var wingL_f1 = mkNode();
     wingL_f1.setGeometry(generateEllipsoid(0.08, 0.20, 0.16, 8, 12, C.arm));
     pos(wingL_f1, -0.04, -0.14, -0.30);
@@ -178,7 +170,6 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
 
     wingL.children.push(wingL_f1, wingL_f2, wingL_f3);
 
-    // ──── Lengan Kanan ────
     var wingR = mkNode();
     wingR.setGeometry(generateEllipsoid(0.18, 0.44, 0.30, 14, 22, C.arm));
     pos(wingR, 0.88, -0.06, 0.04);
@@ -231,7 +222,6 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
     footL.children.push(toeL1, toeL2, toeL3);
     legL.children.push(footL);
 
-    // ──── Kaki Kanan ────
     var legR = mkNode();
     legR.setGeometry(generateCylinder(0.16, 0.75, 16, C.leg));
     pos(legR, 0.34, -1.52, 0.05);
@@ -258,21 +248,34 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
     legR.children.push(footR);
 
     // ══════════════════════════════════════════════════════════════
-    //  8. EKOR (TAIL) — KURVA 3D: BEZIER SWEEP
+    //  8. EKOR & BADAN BELAKANG (TAIL) — SYARAT: KURVA 3D BEZIER
+    //     Dibuat BESAR, TEBAL, & MONTOK (menyelimuti seluruh pantat belakang badan)
+    //     sehingga tampak benar-benar menyatu dengan badan sebagai satu siluet utuh,
+    //     menggunakan 2 Kurva Bezier 3D (dorsal & ventral) sesuai sketsa & figurine.
     // ══════════════════════════════════════════════════════════════
     var tail = mkNode();
-    tail.setGeometry(generateBezierSweep(
-        [0,  0.00,  0.00],
-        [0,  0.10, -0.20],
-        [0,  0.35, -0.42],
-        [0,  0.58, -0.58],
-        0.22,   // baseRadius
-        0.03,   // tipRadius
-        18,     // segments
-        16,     // slices
+    tail.setGeometry(generateBezierDuckTail(
+        // Kurva punggung atas (dorsal): dari punggung atas mengalir mulus ke belakang lalu menjentik ke atas
+        [
+            [0,  0.62, -0.62],  // P0: tertanam di punggung atas badan
+            [0,  0.40, -1.15],  // P1: melandai tebal mengikuti punggung
+            [0,  0.45, -1.48],  // P2: transisi lentur menyapu ke atas
+            [0,  0.62, -1.68]   // P3: puncak ekor menjentik runcing anggun
+        ],
+        // Kurva bawah pantat (ventral): dari panggul bawah tepat di belakang kaki menyapu naik tebal
+        [
+            [0, -0.84, -0.42],  // Q0: tertanam di dasar panggul belakang kaki
+            [0, -0.75, -1.05],  // Q1: pantat bawah montok tebal
+            [0, -0.20, -1.48],  // Q2: melengkung naik dengan tebal
+            [0,  0.54, -1.68]   // Q3: bertemu di ujung ekor menjentik runcing
+        ],
+        0.94,   // baseWidth (lebar montok 0.94 membungkus penuh kontur samping badan)
+        0.08,   // tipWidth  (ujung ekor menjentik runcing rapi sesuai sketsa user & figurine)
+        32,     // segments
+        28,     // slices
         C.tail
     ));
-    pos(tail, 0, -0.16, -0.78);
+    pos(tail, 0, 0, 0);
 
     // ══════════════════════════════════════════════════════════════
     //  RAKIT SELURUH HIERARKI
