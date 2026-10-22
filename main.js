@@ -1026,46 +1026,48 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
     //      Pose-nya diatur oleh setPredatorAmount(t)
     // ══════════════════════════════════════════════════════════════
     var beakUpper = mkNode();
-    beakUpper.setGeometry(generateEllipticParaboloid(0.72, 0.22, 0.70, 16, 32, C.beak));
+    beakUpper.setGeometry(generateEllipticParaboloid(0.72, 0.22, 0.76, 16, 32, C.beak));
 
     var beakLower = mkNode();
-    beakLower.setGeometry(generateEllipticParaboloid(0.62, 0.16, 0.62, 14, 28, C.beak));
+    beakLower.setGeometry(generateEllipticParaboloid(0.62, 0.16, 0.76, 14, 28, C.beak));
 
     // Interior mulut (dark red) — hanya tampil saat mode predator
     var mouthInner = mkNode();
-    mouthInner.setGeometry(generateEllipsoid(0.66, 0.36, 0.14, 16, 24, C.mouth));
+    mouthInner.setGeometry(generateEllipsoid(0.46, 0.36, 0.14, 16, 24, C.mouth));
     mouthInner.visible = false;
     pos(mouthInner, 0, -0.33, 0.90);
 
     // ══════════════════════════════════════════════════════════════
     //  3b. RAHANG PREDATOR (MODE 2)
-    //      Elliptic Paraboloid (cangkang rahang) + CONE (gigi)
+    //      Elliptic Paraboloid (cangkang rahang panjang) + CONE (gigi)
     //
     //      Tiap rahang = node "hinge" (engsel di sudut mulut)
-    //        ├─ shell : paraboloid, ujung (tip) menghadap +Z (depan)
-    //        └─ gigi  : cone-cone di tepi rahang, menghadap rahang lawan
+    //        ├─ shell : paraboloid panjang pipih menyerupai moncong buaya, ujung (tip) di depan
+    //        └─ gigi  : deretan taring kerucut (cone) tajam besar
     //
-    //      Frame engsel: x = kanan, y = atas, z = depan.
-    //      Titik di permukaan paraboloid (r = 0..rMax, th = sudut elips):
-    //          x = a*r*cos(th),  y = b*r*sin(th),  z = D - r^2   (D = rMax^2)
+    //      Moncong rahang dibuat panjang maju ke depan (~2.15 unit)
+    //      sesuai siluet Apex Predator R.E.P.O.
     // ══════════════════════════════════════════════════════════════
-    var JAW_OPEN_UP   = 0.40;   // rad, rahang atas terangkat
-    var JAW_OPEN_DOWN = 0.50;   // rad, rahang bawah turun
+    var JAW_OPEN_UP   = 0.30;   // rad, rahang atas terangkat gagah
+    var JAW_OPEN_DOWN = 0.40;   // rad, rahang bawah membuka ke bawah
 
     function buildJaw(isUpper) {
-        var a    = isUpper ? 0.80 : 0.68;    // lebar
-        var b    = isUpper ? 0.34 : 0.26;    // tebal
-        var rMax = isUpper ? 0.95 : 0.85;    // panjang ~ rMax^2
-        var D    = rMax * rMax;
-        var dirY = isUpper ? -1 : 1;         // sisi gigi: atas -> bawah, bawah -> atas
+        // D = panjang rahang memanjang ke depan (Z)
+        var D           = isUpper ? 2.15 : 1.98;
+        var rMax        = Math.sqrt(D);          // sehingga D = rMax^2
+        var targetWidth = isUpper ? 0.62 : 0.54; // lebar buaya di pangkal (mendekati lebar kepala)
+        var targetThick = isUpper ? 0.30 : 0.22; // pipih vertikal khas moncong alligator
+        var a           = targetWidth / rMax;    // skala sumbu X elips
+        var b           = targetThick / rMax;    // skala sumbu Y elips
+        var dirY        = isUpper ? -1 : 1;      // arah gigi: atas -> bawah (-1), bawah -> atas (+1)
 
         var hinge = mkNode();
 
-        // Cangkang rahang
+        // Cangkang rahang (Elliptic Paraboloid panjang khas buaya)
         var shell = mkNode();
-        shell.setGeometry(generateEllipticParaboloid(a, b, rMax, 20, 36, C.jaw));
+        shell.setGeometry(generateEllipticParaboloid(a, b, rMax, 24, 40, C.jaw));
         pos(shell, 0, 0, D);
-        rx(shell, -Math.PI / 2);             // sumbu paraboloid (+y) -> -z, tip jadi di depan
+        rx(shell, -Math.PI / 2);             // sumbu paraboloid (+y) -> -z, tip di depan (+Z)
         hinge.children.push(shell);
 
         // Satu gigi (cone). Cone: pangkal di y=0, ujung di y=len.
@@ -1073,11 +1075,11 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
             var t = mkNode();
             t.setGeometry(generateCone(rad, len, 8, C.fang));
             pos(t, x, y, z);
-            if (isUpper) {                   // ujung ke bawah
+            if (isUpper) {                   // ujung taring mengarah ke bawah
                 rx(t, Math.PI);
-                rz(t, -side * 0.12);         // sedikit condong ke tengah
-            } else {                         // ujung ke atas
-                rz(t, side * 0.12);
+                rz(t, side * 0.12);          // condong keluar sedikit mengikuti bibir predator
+            } else {                         // ujung taring mengarah ke atas
+                rz(t, -side * 0.12);
             }
             hinge.children.push(t);
         }
@@ -1088,28 +1090,31 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
                 var f = n > 1 ? k / (n - 1) : 0;
                 var z = zStart + (zEnd - zStart) * f;
                 var r = Math.sqrt(Math.max(D - z, 0.01));
-                // gigi tengah lebih panjang, ke arah pangkal & ujung lebih pendek
-                var l = len * (0.72 + 0.28 * Math.sin(Math.PI * (0.2 + 0.6 * f)));
+                // Gigi depan dan tengah lebih panjang dan kokoh
+                var l = len * (0.82 + 0.38 * Math.sin(Math.PI * (0.12 + 0.76 * f)));
                 for (var s = -1; s <= 1; s += 2) {
                     var x = s * a * r * Math.cos(th);
-                    var y = dirY * b * r * Math.sin(th) - dirY * 0.03; // tenggelam sedikit ke cangkang
+                    var y = dirY * b * r * Math.sin(th) - dirY * 0.035;
                     addTooth(x, y, z, l, rad, s);
                 }
             }
         }
 
-        var zA   = 0.22;            // mulai di luar permukaan kepala
-        var zB   = D - 0.16;        // berhenti sedikit sebelum ujung
-        var n    = Math.max(3, Math.round((zB - zA) / 0.085) + 1);
+        var zA   = 0.28;            // mulai di depan muka
+        var zB   = D - 0.15;        // hingga hampir mendekati ujung moncong
+        var n    = Math.max(4, Math.round((zB - zA) / 0.16) + 1);
         var half = (zB - zA) / (n - 1) * 0.5;
 
-        // Baris luar (besar & panjang) + baris dalam (lebih kecil, selang-seling)
-        addRow(0.30, isUpper ? 0.28 : 0.24, 0.048, zA,        zB,        n);
-        addRow(0.95, isUpper ? 0.18 : 0.16, 0.040, zA + half, zB - half, n - 1);
+        // Baris luar (taring utama, besar & panjang) + baris dalam (selang-seling)
+        addRow(0.28, isUpper ? 0.36 : 0.30, isUpper ? 0.060 : 0.052, zA,        zB,        n);
+        addRow(0.88, isUpper ? 0.22 : 0.18, isUpper ? 0.040 : 0.034, zA + half, zB - half, n - 1);
 
-        // Satu taring depan di ujung rahang
-        var rf = Math.sqrt(0.06);
-        addTooth(0, dirY * b * rf - dirY * 0.03, D - 0.06, isUpper ? 0.20 : 0.17, 0.05, 0);
+        // Sepasang taring besar depan di ujung moncong rahang
+        var rf = Math.sqrt(0.10);
+        var fx = a * rf * 0.65;
+        var fy = dirY * b * rf - dirY * 0.035;
+        addTooth(-fx, fy, D - 0.10, isUpper ? 0.32 : 0.26, 0.058, -1);
+        addTooth( fx, fy, D - 0.10, isUpper ? 0.32 : 0.26, 0.058,  1);
 
         return { hinge: hinge };
     }
@@ -1143,22 +1148,40 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
     }
 
     function setPredatorAmount(t) {
-        // Paruh bebek lama: atas naik & miring ke atas, bawah turun & miring ke bawah
-        LIBS.set_I4(beakUpper.POSITION_MATRIX);
-        pos(beakUpper, 0, lerp(-0.22, 0.62, t), lerp(1.44, 1.00, t));
-        rx(beakUpper, -Math.PI * 0.48 - 0.90 * t);
+        // ── Paruh lama mengorbit pusat kepala: naik/turun sambil ikut berputar ──
+        var OLD_BEAK_UP_ANGLE   =  0.50;   // rad, paruh atas berputar ke atas (~46°)
+        var OLD_BEAK_DOWN_ANGLE = -0.45;   // rad, paruh bawah berputar ke bawah (~26°)
+        var OLD_BEAK_SINK       =  0.10;   // seberapa dalam pangkal paruh terbenam ke kepala
 
-        LIBS.set_I4(beakLower.POSITION_MATRIX);
-        pos(beakLower, 0, lerp(-0.36, -0.98, t), lerp(1.38, 1.12, t));
-        rx(beakLower, -Math.PI * 0.48 + 0.70 * t);
+        // Pose awal (mode biasa), koordinat lokal kepala. Pusat kepala = (0, 0, 0)
+        var UP_Y0 = -0.22, UP_Z0 = 1.44;
+        var DN_Y0 = -0.36, DN_Z0 = 1.38;
+        var BEAK_TILT = -Math.PI * 0.48;   // orientasi paruh di mode biasa
 
-        // Engsel rahang predator membuka (atas: rotasi -X, bawah: rotasi +X)
+        // ang > 0 = berputar naik, ang < 0 = berputar turun
+        function orbitBeak(node, y0, z0, ang, sink) {
+            var c = Math.cos(ang), s = Math.sin(ang);
+            // Putar posisi paruh mengelilingi pusat kepala (bidang Y-Z)
+            var y =  y0 * c + z0 * s;
+            var z = -y0 * s + z0 * c;
+            // Tarik sedikit ke arah pusat supaya pangkal paruh terbenam, tidak melayang
+            var k = 1 - sink / Math.sqrt(y * y + z * z);
+
+            LIBS.set_I4(node.POSITION_MATRIX);
+            pos(node, 0, y * k, z * k);
+            rx(node, BEAK_TILT - ang);     // orientasi ikut berputar dengan sudut yang sama
+        }
+
+        orbitBeak(beakUpper, UP_Y0, UP_Z0, OLD_BEAK_UP_ANGLE   * t, OLD_BEAK_SINK * t);
+        orbitBeak(beakLower, DN_Y0, DN_Z0, OLD_BEAK_DOWN_ANGLE * t, OLD_BEAK_SINK * t);
+
+        // Engsel rahang predator membuka (panjang ~2.15 unit maju jauh ke depan)
         LIBS.set_I4(jawUpper.hinge.POSITION_MATRIX);
-        pos(jawUpper.hinge, 0, -0.16, 0.78);
+        pos(jawUpper.hinge, 0, -0.16, 0.75);
         rx(jawUpper.hinge, -JAW_OPEN_UP * t);
 
         LIBS.set_I4(jawLower.hinge.POSITION_MATRIX);
-        pos(jawLower.hinge, 0, -0.50, 0.78);
+        pos(jawLower.hinge, 0, -0.50, 0.75);
         rx(jawLower.hinge, JAW_OPEN_DOWN * t);
 
         // Paruh baru "muncul" begitu transisi dimulai
