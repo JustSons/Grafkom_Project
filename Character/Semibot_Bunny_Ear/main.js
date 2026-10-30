@@ -114,13 +114,14 @@ function setTube(m, verts) {
 /* ===== 4. Geometri Semibot (tinggi badan + kepala ~ 2.0) ===== */
 const R_HEAD = .307, H_DOME = .34;
 const mLeg = solidCone(.115, .61);            // kaki: kerucut (dibalik, puncak ke bawah)
-const mArm = solidCone(.065, .72);            // lengan meruncing dengan radius lebih besar
+const mArm = solidCone(.07, .72);            // lengan meruncing dengan radius lebih besar
 const mBand = solidCyl(.352, .36);            // badan bawah (cincin lebar)
 const mMain = solidCyl(.34, .36);             // badan atas
 const mCollar = solidCyl(.315, .13);          // kerah / leher
 const mHeadCyl = solidCyl(R_HEAD, .15);       // sisi kepala
 const mHinge = solidCyl(.026, .075);          // engsel kecil di belakang kepala
 const mHealthSquare = box(1, 1, 1);             // unit kotak health bar
+const mSeamBand = buildMesh([part(createCylinder(1, 1, SEG))]); // dinding silinder satuan untuk garis sambungan
 const mDome = DOME_TYPE === 'rounded'
     ? buildMesh([part(createRoundedDome(R_HEAD, H_DOME, SEG)), disk(R_HEAD, 0)])
     : DOME_TYPE === 'paraboloid'
@@ -169,6 +170,7 @@ let ang = 0, t = 0, state = 'idle', health = MAX_HP, hit = 0, TAU = Math.PI * 2;
 
 function drawBot(P, bl, body) {
     const q = 1 / Math.sqrt(P.sy);                  // squash & stretch menjaga volume
+    const seam = body.map(channel => channel * .32);
     const root = mm(M.T(P.R * Math.sin(ang) + P.shx, P.bob, P.R * Math.cos(ang)), M.RY(P.yaw), M.S(q, P.sy, q),
                     M.T(0, .9, 0), M.RX(P.tx), M.RZ(P.tz), M.T(0, -.9, 0));
     for (const s of [-1, 1]) {                       // kaki: kerucut, pivot di pinggul
@@ -178,9 +180,11 @@ function drawBot(P, bl, body) {
     draw(mBand, mm(root, M.T(0, .78, 0)), body);     // badan bawah
     draw(mMain, mm(root, M.T(0, 1.14, 0)), body);    // badan atas
     draw(mCollar, mm(root, M.T(0, 1.385, 0)), body);
+    draw(mSeamBand, mm(root, M.T(0, .96, 0), M.S(.354, .009, .354)), seam, true);
+    draw(mSeamBand, mm(root, M.T(0, 1.32, 0), M.S(.342, .009, .342)), seam, true);
     for (const s of [-1, 1]) {                       // lengan kerucut ramping tanpa engsel
         const A = mm(root, M.T(s*.355, 1.29, 0), M.RZ(s*P.az), M.RX(s < 0 ? P.aR : P.aL));
-        draw(mArm, mm(A, M.T(0, -.36, 0), M.RX(Math.PI), M.S(1, 1, .68)), body);
+        draw(mArm, mm(A, M.T(0, -.36, 0), M.RX(Math.PI), M.S(.9, 1, 1)), body);
     }
     /* indikator health kotak di punggung (kerah) */
     const ratio = health / MAX_HP, lit = ratio > .5 ? [.2,.9,.3] : ratio > .25 ? [.95,.8,.15] : [.95,.2,.15];
@@ -205,7 +209,7 @@ function drawBot(P, bl, body) {
     for (const s of [-1, 1]) {                       // mata: bagian putih dan pupil dibuat matte
         const ex = s * .16, ey = .16, ez = .225;
         draw(mBall, mm(Hd, M.T(ex, ey, ez), M.S(.108, .108 * bl, .108)), COL.white, true);
-        draw(mBall, mm(Hd, M.T(ex + dx*.097, ey + dy*.097*bl, ez + dz*.097), M.S(.025, .025 * bl, .025)), COL.black, true);
+        draw(mBall, mm(Hd, M.T(ex + dx*.097, ey + dy*.097*bl, ez + dz*.097), M.S(.03, .03 * bl, .02)), COL.black, true);
     }
     /* telinga kelinci: tabung di sepanjang kurva Bezier kubik 3D yang dihitung ulang tiap frame */
     [-1, 1].forEach((s, i) => {
