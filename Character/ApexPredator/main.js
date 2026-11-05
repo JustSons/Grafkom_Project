@@ -1331,6 +1331,8 @@ function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
         wingR             : wingR,
         legL              : legL,
         legR              : legR,
+        footL             : footL,
+        footR             : footR,
         tail              : tail
     };
 }
@@ -1505,15 +1507,49 @@ function main() {
         if (e.touches.length<2) delete touches._pd;
     });
 
-    // ─── SPACE → toggle mode Predator ───
+    // ─── KONTROL ANIMASI & INTERAKSI ───
     var predatorOn  = false;
     var predatorAmt = 0;      // 0..1, dianimasikan halus di render loop
+    var isWalking   = true;   // animasi jalan aktif secara default
+    var walkBlend   = 1.0;    // 0..1 untuk transisi halus start/stop jalan
+    var walkTime    = 0;
+    var lastTime    = 0;
+
     window.addEventListener('keydown', function (e) {
         if (e.code === 'Space') {
             predatorOn = !predatorOn;
+            updateUI();
+            e.preventDefault();
+        } else if (e.code === 'KeyW') {
+            isWalking = !isWalking;
+            updateUI();
             e.preventDefault();
         }
     });
+
+    // Expose toggle functions to window for UI buttons
+    window.toggleWalk = function() {
+        isWalking = !isWalking;
+        updateUI();
+    };
+    window.togglePredator = function() {
+        predatorOn = !predatorOn;
+        updateUI();
+    };
+
+    function updateUI() {
+        var walkStatusEl = document.getElementById('walk-status');
+        if (walkStatusEl) {
+            walkStatusEl.textContent = isWalking ? 'AKTIF' : 'NONAKTIF';
+            walkStatusEl.className = isWalking ? 'badge active' : 'badge inactive';
+        }
+        var predStatusEl = document.getElementById('pred-status');
+        if (predStatusEl) {
+            predStatusEl.textContent = predatorOn ? 'PREDATOR' : 'NORMAL';
+            predStatusEl.className = predatorOn ? 'badge active' : 'badge inactive';
+        }
+    }
+    updateUI();
 
     // ─── GL STATE ───
     GL.enable(GL.DEPTH_TEST);
@@ -1523,6 +1559,11 @@ function main() {
 
     // ─── RENDER LOOP ───
     var animate = function(time) {
+        // Delta time halus
+        var dt = (time - lastTime) * 0.001;
+        if (lastTime === 0 || dt > 0.1) dt = 0.016;
+        lastTime = time;
+
         // Inersia kamera
         if (!drag) {
             dTheta *= FRICTION; dPhi *= FRICTION;
@@ -1538,6 +1579,141 @@ function main() {
             model.setPredatorAmount(predatorAmt);
         }
 
+        // Transisi halus start/stop jalan (blend in/out)
+        var targetBlend = isWalking ? 1.0 : 0.0;
+        walkBlend += (targetBlend - walkBlend) * 0.08;
+        if (Math.abs(targetBlend - walkBlend) < 0.002) walkBlend = targetBlend;
+
+        if (walkBlend > 0.001) {
+            walkTime += dt * 4.6; // Kecepatan langkah berjalan
+        }
+
+        var tau = walkTime;
+
+        // ═════════════════════════════════════════════════════════════════
+        // HIERARCHICAL TRANSFORMATION PIPELINE UNTUK ANIMASI BERJALAN
+        // ═════════════════════════════════════════════════════════════════
+        // Menggunakan Pivot Transform: semua bagian tubuh diputar tepat
+        // pada engsel sendi aslinya sehingga 100% INTACT & TIDAK PUTUS!
+
+        // 1. BADAN (ROOT)
+        //    - Translate: Vertical bobbing naik-turun saat melangkah
+        //    - Rotate Z: Waddle / goyang panggul kiri-kanan
+        //    - Rotate Y: Pelvis twist halus
+        //    - Scaling: Squash & Stretch elastis saat menginjak lantai
+        var bobY     = -0.055 * Math.cos(2 * tau) * walkBlend;
+        var waddleZ  =  0.060 * Math.sin(tau) * walkBlend;
+        var twistY   =  0.035 * Math.cos(tau) * walkBlend;
+        var squashY  = 1.0 - 0.035 * Math.cos(2 * tau) * walkBlend;
+        var stretchX = 1.0 + 0.020 * Math.cos(2 * tau) * walkBlend;
+        var stretchZ = 1.0 + 0.020 * Math.cos(2 * tau) * walkBlend;
+
+        model.root.MOVE_MATRIX = LIBS.makePivotTransform(
+            0, 0, 0,
+            0, twistY, waddleZ,
+            stretchX, squashY, stretchZ,
+            0, bobY, 0
+        );
+
+        // 2. KAKI (LEGS)
+        //    - Pivot di hip (0, 0.75, 0): menjamin pangkal paha 100% menempel di badan!
+        //    - Rotate X: Ayunan kaki kiri & kanan berlawanan fase
+        //    - Rotate Z: Sedikit splay keluar saat melangkah
+        var legSwing = 0.36 * Math.sin(tau) * walkBlend;
+        var legSplay = 0.02 * Math.sin(tau) * walkBlend;
+
+        model.legL.MOVE_MATRIX = LIBS.makePivotTransform(
+            0, 0.75, 0,
+            legSwing, 0, -legSplay,
+            1, 1, 1,
+            0, 0, 0
+        );
+
+        model.legR.MOVE_MATRIX = LIBS.makePivotTransform(
+            0, 0.75, 0,
+            -legSwing, 0, legSplay,
+            1, 1, 1,
+            0, 0, 0
+        );
+
+        // 3. TELAPAK KAKI (FEET)
+        //    - Pivot di ankle: (0, 0.04, -0.10)
+        //    - Rotate X: Ankle flexion (menyesuaikan kemiringan kaki agar telapak menapak)
+        //    - Scaling: Squash kontak saat telapak menyentuh lantai
+        var ankleL = -0.55 * legSwing;
+        var ankleR =  0.55 * legSwing;
+        var contactL = Math.max(0, -Math.sin(tau)) * walkBlend;
+        var contactR = Math.max(0,  Math.sin(tau)) * walkBlend;
+        var footSquashL = 1.0 - 0.05 * contactL;
+        var footSquashR = 1.0 - 0.05 * contactR;
+
+        model.footL.MOVE_MATRIX = LIBS.makePivotTransform(
+            0, 0.04, -0.10,
+            ankleL, 0, 0,
+            1.0 + 0.03 * contactL, footSquashL, 1.0 + 0.03 * contactL,
+            0, 0, 0
+        );
+
+        model.footR.MOVE_MATRIX = LIBS.makePivotTransform(
+            0, 0.04, -0.10,
+            ankleR, 0, 0,
+            1.0 + 0.03 * contactR, footSquashR, 1.0 + 0.03 * contactR,
+            0, 0, 0
+        );
+
+        // 4. SAYAP (WINGS) — SYARAT: ROTATE ARBITRARY AXIS!
+        //    - Pivot di bahu: WingL (0.55, 0, 0), WingR (-0.55, 0, 0)
+        //    - Rotasi mengelilingi sumbu sembarang diagonal 3D: (±0.75, 0.35, 0.55)
+        //    - Menghasilkan ayunan sayap 3D menyeimbangkan langkah kaki tanpa lepas dari bahu!
+        var wingFlap = 0.28 * Math.cos(tau) * walkBlend;
+
+        model.wingL.MOVE_MATRIX = LIBS.makePivotTransformAxis(
+            0.55, 0, 0,
+            0.75, 0.35, 0.55,
+            wingFlap,
+            1, 1, 1,
+            0, 0, 0
+        );
+
+        model.wingR.MOVE_MATRIX = LIBS.makePivotTransformAxis(
+            -0.55, 0, 0,
+            -0.75, 0.35, 0.55,
+            -wingFlap,
+            1, 1, 1,
+            0, 0, 0
+        );
+
+        // 5. EKOR (TAIL) — SYARAT: ROTATE ARBITRARY AXIS!
+        //    - Pivot di dasar ekor: (0, 0, -0.45)
+        //    - Rotasi sumbu sembarang diagonal 3D: (0.35, 1.0, 0.40)
+        //    - Mengibaskan ekor secara anggun beriringan dengan goyangan badan
+        var tailWag = 0.22 * Math.sin(tau) * walkBlend;
+
+        model.tail.MOVE_MATRIX = LIBS.makePivotTransformAxis(
+            0, 0, -0.45,
+            0.35, 1.0, 0.40,
+            tailWag,
+            1, 1, 1,
+            0, 0, 0
+        );
+
+        // 6. KEPALA (HEAD)
+        //    - Pivot di leher: (0, -0.5, 0)
+        //    - Translate Z: Head bobbing maju-mundur khas burung
+        //    - Rotate X: Mengangguk halus
+        //    - Rotate Z: Menstabilkan orientasi pandangan mata terhadap roll badan
+        var headBobZ  =  0.045 * (1.0 - Math.cos(2 * tau)) * walkBlend;
+        var headNodX  =  0.055 * Math.sin(2 * tau) * walkBlend;
+        var headRollZ = -0.45  * waddleZ;
+
+        model.head.MOVE_MATRIX = LIBS.makePivotTransform(
+            0, -0.5, 0,
+            headNodX, 0, headRollZ,
+            1, 1, 1,
+            0, 0, headBobZ
+        );
+
+        // Render scene
         GL.viewport(0, 0, CANVAS.width, CANVAS.height);
         GL.clear(GL.COLOR_BUFFER_BIT | GL.DEPTH_BUFFER_BIT);
 
