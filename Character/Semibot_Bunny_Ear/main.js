@@ -239,21 +239,19 @@ const mMain = solidCyl(.34, .36); // badan atas
 const mCollar = solidCyl(.315, .13); // kerah / leher
 const mHeadCyl = solidCyl(R_HEAD, .15); // sisi kepala
 const mHinge = solidCyl(.026, .075); // engsel kecil di belakang kepala
-const mHealthSquare = box(1, 1, 1); // unit kotak health bar
+const mHealthLed = solidCyl(1, 1); // unit silinder pipih health bar
 const mSeamBand = buildMesh([part(createCylinder(1, 1, SEG))]); // dinding silinder satuan untuk garis sambungan
 const mDome = DOME_TYPE === 'rounded'
     ? buildMesh([part(createRoundedDome(R_HEAD, H_DOME, SEG)), disk(R_HEAD, 0)])
     : DOME_TYPE === 'paraboloid'
         ? buildMesh([part(createParaboloid(R_HEAD, H_DOME, SEG)), disk(R_HEAD, -H_DOME)])
         : buildMesh([part(createSphere(R_HEAD, SEG))]);
-const mBall = buildMesh([part(createSphere(1, SEG))]); // bola satuan: sclera, pupil, rongga mata
+const mBall = buildMesh([part(createSphere(1, SEG))]); // bola satuan: sclera, pupil, ujung engsel
 const earOut = [makeTube(16, 12), makeTube(16, 12)], earIn = [makeTube(16, 12), makeTube(16, 12)];
 
 const COL = {
     white: [.97, .97, .97],
     black: [.02, .02, .03],
-    socket: [.38, .04, .04],
-    pin: [.35, .36, .4],
     pink: [1, .62, .7],
     ledOff: [.22, .07, .07],
     plate: [.1, .03, .03]
@@ -338,10 +336,10 @@ function drawBot(P, bl, body) {
         const th = -.5 + i / (MAX_HP - 1);
         const on = i < health && !(health <= 2 && Math.sin(t * 10) > 0);
         const L = mm(root, M.T(.319 * Math.sin(th), 1.385, -.319 * Math.cos(th)), M.RY(Math.PI - th));
-        draw(mHealthSquare, mm(L, M.S(.016, .016, .005)), COL.plate);
-        draw(mHealthSquare, mm(L, M.T(0, 0, .007), M.S(.011, .011, .003)), on ? lit : COL.ledOff, on);
+        draw(mHealthLed, mm(L, M.RX(Math.PI / 2), M.S(.016, .005, .016)), COL.plate);
+        draw(mHealthLed, mm(L, M.T(0, 0, .007), M.RX(Math.PI / 2), M.S(.011, .003, .011)), on ? lit : COL.ledOff, on);
     }
-    /* kepala: silinder + kubah (paraboloid) */
+    /* kepala: silinder + kubah (potongan bola) */
     const Hd = mm(root, M.T(0, 1.47, 0), M.RY(P.hy), M.RX(P.hp));
     draw(mHeadCyl, mm(Hd, M.T(0, .075, 0)), body);
     const domeModel = DOME_TYPE === 'paraboloid'
@@ -521,7 +519,8 @@ function frame(now) {
     const eye = (1 - bl) * (1 - .6 * hit);
     resize();
     gl.clearColor(.05, .06, .08, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);    V = mm(M.T(0, 0, -dist), M.RX(cp), M.RY(cy), M.T(0, -1.3, 0));
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    V = mm(M.T(0, 0, -dist), M.RX(cp), M.RY(cy), M.T(0, -1.3, 0));
     gl.uniformMatrix4fv(U.uPr, false, Pr);
     lines(grid, [.16, .19, .24]);
     drawBot(D, Math.max(.08, eye), rgb(colEl.value));
