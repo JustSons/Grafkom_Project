@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Elsa - REPO</title>
+  <style>
+    html, body { margin: 0; height: 100%; font-family: sans-serif; background: #eef1f5; }
+    #glcanvas { width: 100%; height: 100%; display: block; cursor: grab; }
+    #ui { position: fixed; top: 12px; left: 12px; background: rgba(255,255,255,.85); padding: 8px 12px; border-radius: 8px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <canvas id="glcanvas"></canvas>
+  <div id="ui">
+    <label><input type="checkbox" id="walk" checked> Jalan</label><br>
+    <small>Drag: putar · Scroll: zoom</small>
+  </div>
+  <script src="libs.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
