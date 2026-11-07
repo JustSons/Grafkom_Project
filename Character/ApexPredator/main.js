@@ -1597,21 +1597,18 @@ function main() {
         // pada engsel sendi aslinya sehingga 100% INTACT & TIDAK PUTUS!
 
         // 1. BADAN (ROOT)
-        //    - Translate: Vertical bobbing naik-turun saat melangkah
+        //    - Translate: Vertical bobbing naik-turun halus saat melangkah
         //    - Rotate Z: Waddle / goyang panggul kiri-kanan
         //    - Rotate Y: Pelvis twist halus
-        //    - Scaling: Squash & Stretch elastis saat menginjak lantai
-        var bobY     = -0.055 * Math.cos(2 * tau) * walkBlend;
-        var waddleZ  =  0.060 * Math.sin(tau) * walkBlend;
-        var twistY   =  0.035 * Math.cos(tau) * walkBlend;
-        var squashY  = 1.0 - 0.035 * Math.cos(2 * tau) * walkBlend;
-        var stretchX = 1.0 + 0.020 * Math.cos(2 * tau) * walkBlend;
-        var stretchZ = 1.0 + 0.020 * Math.cos(2 * tau) * walkBlend;
+        //    - Skala: TETAP ALAMI (1.0, 1.0, 1.0) — badan TIDAK memanjang/gepeng!
+        var bobY    = -0.045 * Math.cos(2 * tau) * walkBlend;
+        var waddleZ =  0.055 * Math.sin(tau) * walkBlend;
+        var twistY  =  0.030 * Math.cos(tau) * walkBlend;
 
         model.root.MOVE_MATRIX = LIBS.makePivotTransform(
             0, 0, 0,
             0, twistY, waddleZ,
-            stretchX, squashY, stretchZ,
+            1, 1, 1, // Skala badan tetap 100% natural, bulat sempurna!
             0, bobY, 0
         );
 
@@ -1636,61 +1633,68 @@ function main() {
             0, 0, 0
         );
 
-        // 3. TELAPAK KAKI (FEET)
-        //    - Pivot di ankle: (0, 0.04, -0.10)
+        // 3. TELAPAK KAKI & JARI (FEET & TOES) — FOKUS SYARAT: SCALING!
+        //    - Pivot di dasar telapak: (0, -0.08, 0.0) agar dasar telapak tetap menapak di lantai
         //    - Rotate X: Ankle flexion (menyesuaikan kemiringan kaki agar telapak menapak)
-        //    - Scaling: Squash kontak saat telapak menyentuh lantai
-        var ankleL = -0.55 * legSwing;
-        var ankleR =  0.55 * legSwing;
+        //    - Scaling (IMPACT CONTACT SQUASH):
+        //      HANYA telapak kaki dan jari-jarinya yang memipih gepeng (-45% di Y)
+        //      dan melebar (+25% di X & Z) tepat saat menginjak tanah,
+        //      lalu kembali bulat normal saat kaki diangkat!
+        var ankleL   = -0.55 * legSwing;
+        var ankleR   =  0.55 * legSwing;
         var contactL = Math.max(0, -Math.sin(tau)) * walkBlend;
         var contactR = Math.max(0,  Math.sin(tau)) * walkBlend;
-        var footSquashL = 1.0 - 0.05 * contactL;
-        var footSquashR = 1.0 - 0.05 * contactR;
+        var footSquashL = 1.0 - 0.45 * contactL; // gepeng hingga 0.55 saat menapak!
+        var footSpreadL = 1.0 + 0.25 * contactL; // melebar hingga 1.25 saat menapak!
+        var footSquashR = 1.0 - 0.45 * contactR;
+        var footSpreadR = 1.0 + 0.25 * contactR;
 
         model.footL.MOVE_MATRIX = LIBS.makePivotTransform(
-            0, 0.04, -0.10,
+            0, -0.08, 0,
             ankleL, 0, 0,
-            1.0 + 0.03 * contactL, footSquashL, 1.0 + 0.03 * contactL,
+            footSpreadL, footSquashL, footSpreadL,
             0, 0, 0
         );
 
         model.footR.MOVE_MATRIX = LIBS.makePivotTransform(
-            0, 0.04, -0.10,
+            0, -0.08, 0,
             ankleR, 0, 0,
-            1.0 + 0.03 * contactR, footSquashR, 1.0 + 0.03 * contactR,
+            footSpreadR, footSquashR, footSpreadR,
             0, 0, 0
         );
 
         // 4. SAYAP (WINGS) — SYARAT: ROTATE ARBITRARY AXIS!
-        //    - Pivot di bahu: WingL (0.55, 0, 0), WingR (-0.55, 0, 0)
-        //    - Rotasi mengelilingi sumbu sembarang diagonal 3D: (±0.75, 0.35, 0.55)
-        //    - Menghasilkan ayunan sayap 3D menyeimbangkan langkah kaki tanpa lepas dari bahu!
-        var wingFlap = 0.28 * Math.cos(tau) * walkBlend;
+        //    - PIVOT TEPAT DI DASAR RIM PARABOLOID: (0, 0.5625, 0)
+        //      Dasar rim paraboloid adalah bagian yang menempel di badan.
+        //      Dengan pivot di (0, 0.5625, 0), pangkal sayap 100% TERKUNCI & TIDAK LEPAS!
+        //    - Sumbu Sembarang 3D Diagonal: (±0.75, 0.30, 0.58)
+        //      Memadukan ayunan ke atas-bawah dan ke depan-belakang secara simultan.
+        var wingFlap = 0.26 * Math.cos(tau) * walkBlend;
 
         model.wingL.MOVE_MATRIX = LIBS.makePivotTransformAxis(
-            0.55, 0, 0,
-            0.75, 0.35, 0.55,
+            0, 0.5625, 0,
+            0.75, 0.30, 0.58,
             wingFlap,
             1, 1, 1,
             0, 0, 0
         );
 
         model.wingR.MOVE_MATRIX = LIBS.makePivotTransformAxis(
-            -0.55, 0, 0,
-            -0.75, 0.35, 0.55,
+            0, 0.5625, 0,
+            -0.75, 0.30, 0.58,
             -wingFlap,
             1, 1, 1,
             0, 0, 0
         );
 
         // 5. EKOR (TAIL) — SYARAT: ROTATE ARBITRARY AXIS!
-        //    - Pivot di dasar ekor: (0, 0, -0.45)
+        //    - Pivot tepat di titik pusat pangkal kurva Bezier: (0, -0.11, -0.52)
         //    - Rotasi sumbu sembarang diagonal 3D: (0.35, 1.0, 0.40)
         //    - Mengibaskan ekor secara anggun beriringan dengan goyangan badan
         var tailWag = 0.22 * Math.sin(tau) * walkBlend;
 
         model.tail.MOVE_MATRIX = LIBS.makePivotTransformAxis(
-            0, 0, -0.45,
+            0, -0.11, -0.52,
             0.35, 1.0, 0.40,
             tailWag,
             1, 1, 1,
@@ -1702,16 +1706,29 @@ function main() {
         //    - Translate Z: Head bobbing maju-mundur khas burung
         //    - Rotate X: Mengangguk halus
         //    - Rotate Z: Menstabilkan orientasi pandangan mata terhadap roll badan
+        //    - Skala: TETAP ALAMI (1.0, 1.0, 1.0)
         var headBobZ  =  0.045 * (1.0 - Math.cos(2 * tau)) * walkBlend;
-        var headNodX  =  0.055 * Math.sin(2 * tau) * walkBlend;
+        var headNodX  =  0.050 * Math.sin(2 * tau) * walkBlend;
         var headRollZ = -0.45  * waddleZ;
 
         model.head.MOVE_MATRIX = LIBS.makePivotTransform(
             0, -0.5, 0,
             headNodX, 0, headRollZ,
-            1, 1, 1,
+            1, 1, 1, // Skala kepala tetap 100% normal
             0, 0, headBobZ
         );
+
+        // Update indikator live scale pada HUD jika tersedia
+        var scaleLiveEl = document.getElementById('live-scale-val');
+        if (scaleLiveEl) {
+            var activeFootSquash = Math.min(footSquashL, footSquashR);
+            var activeFootSpread = Math.max(footSpreadL, footSpreadR);
+            if (activeFootSquash < 0.95) {
+                scaleLiveEl.textContent = 'Menapak: GEPENG (Tinggi Sy: ' + activeFootSquash.toFixed(2) + 'x, Lebar: ' + activeFootSpread.toFixed(2) + 'x)';
+            } else {
+                scaleLiveEl.textContent = 'Di Udara: NORMAL (Sy: 1.00x, Sx: 1.00x)';
+            }
+        }
 
         // Render scene
         GL.viewport(0, 0, CANVAS.width, CANVAS.height);
