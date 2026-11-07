@@ -19,22 +19,25 @@
     uniform vec3 uColor, uEye; uniform float uMouth;
     void main(){
       vec3 N = normalize(vN), L = normalize(vec3(0.5, 1.0, 0.8));
+      float inside = 0.0; // mode 5 (mangkuk dagu): sisi dalam = bagian dalam mulut
+      if (uMouth > 4.5 && dot(N, normalize(uEye - vW)) < 0.0) { N = -N; inside = 1.0; }
       float d = max(dot(N, L), 0.0);
       vec3 V = normalize(uEye - vW), H = normalize(L + V);
       float s = pow(max(dot(N, H), 0.0), 24.0) * 0.15;
       float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.08;
       vec3 col = uColor * (0.38 + 0.78 * d) + vec3(s + rim);
+      col *= mix(vec3(1.0), vec3(0.3, 0.22, 0.18), inside);
       // uMouth=1: kepala (bagian bawah-depan jadi bagian dalam mulut), uMouth=2: moncong (langit-langit mulut)
       float mk = 0.0, dk = 0.0; vec3 mc = vec3(0.03, 0.015, 0.015) * (0.5 + d);
-      if (uMouth > 3.5) { // bagian dalam telinga: lanjutan pink di bagian bawah ujung
+      if (uMouth > 3.5 && uMouth < 4.5) { // bagian dalam telinga: lanjutan pink di bagian bawah ujung
         float rr = max(1.0 - vL.y, 0.02); mk = smoothstep(0.25, 0.4, vL.z / rr) * (1.0 - smoothstep(0.62, 0.72, abs(vL.x) / rr)) * (1.0 - smoothstep(0.78, 0.9, vL.y));
         mc = vec3(0.80, 0.46, 0.43) * (0.45 + 0.7 * d); dk = 1.0 - smoothstep(0.5, 0.8, vL.y);
       }
-      else if (uMouth > 2.5) { // bagian dalam telinga (merah muda) dilukis di permukaan pangkal telinga
+      else if (uMouth > 2.5 && uMouth < 3.5) { // bagian dalam telinga (merah muda) dilukis di permukaan pangkal telinga
         float rr = 1.0 - 0.2 * vL.y; mk = smoothstep(0.25, 0.4, vL.z / rr) * (1.0 - smoothstep(0.62, 0.72, abs(vL.x) / rr));
         mc = vec3(0.80, 0.46, 0.43) * (0.45 + 0.7 * d); dk = 1.0;
       }
-      else if (uMouth > 0.5) { // kepala: bagian dalam kantong mulut (atap hitam, lantai cokelat muda) mengikuti kedalaman
+      else if (uMouth > 0.5 && uMouth < 1.5) { // kepala: bagian dalam kantong mulut (atap hitam, lantai cokelat muda) mengikuti kedalaman
         float r = length(vL), im = 1.0 - smoothstep(0.86, 0.985, r);
         float fl = 1.0 - smoothstep(-0.31, -0.19, vL.y);
         col = mix(col, col * mix(vec3(0.02), vec3(0.36, 0.29, 0.25), fl), im);
@@ -67,7 +70,10 @@
     t => Math.max(0.02, 0.075 * (1 - 0.6 * t) * Math.sqrt(Math.max(0, 1 - Math.pow(Math.max(0, (t - 0.85) / 0.15), 2))))));
 
   // kepala: SATU permukaan utuh hasil pahatan satu ellipsoid -- moncong, kantong mulut (senyum) dan dagu rata ikut permukaan yang sama
-  const headMesh = createMesh(gl, Geo.sculptedHead(150, 220, { mouth: { smile: 0.75 }, chin: { yBot: -0.8, yBot2: -1.0, wEdge: 0.45, zPlane: 0.82 } }));
+  const headMesh = createMesh(gl, Geo.sculptedHead(150, 220, { mouth: { smile: 0.75 } }));
+
+  // dagu = MANGKUK dalam: belahan bawah ellipsoid (permukaan luar = dagu, permukaan dalam = bagian dalam mulut)
+  const chinBowl = createMesh(gl, Geo.ellipsoidPatch([0, -1, 0], [0, 0, 1], 0, Math.PI / 2, 0, 2 * Math.PI, 24, 56));
 
   function draw(mesh, M, color, mouth) {
     gl.uniformMatrix4fv(uModel, false, M);
@@ -81,7 +87,7 @@
   }
 
   const { translation: T, scaling: S, rotX, rotY, rotZ, chain } = Mat4;
-  const FUR = [1, 1, 0.97], FUR_D = [0.56, 0.45, 0.35], DARK = [0.08, 0.06, 0.05];
+  const FUR = [1, 1, 0.999], FUR_D = [0.56, 0.45, 0.35], DARK = [0.08, 0.06, 0.05];
   const TONGUE = [0.93, 0.5, 0.52], EAR_IN = [0.78, 0.45, 0.42], CAVITY = [0.03, 0.015, 0.015], FUR_L = [0.86, 0.72, 0.57], MOUTH = [0.18, 0.08, 0.07], SHADOW = [0.12, 0.12, 0.12];
 
   /* ---- Kontrol ---- */
@@ -142,27 +148,30 @@
 
     // ===== KEPALA (section-section, pivot di leher) =====
     const P = [0, 1.2, 0.4];
-    const head = chain(root, T(0, 0, -0.27), T(...P), rotX(0.05 * amp * Math.sin(2 * w + 1)), rotY(0.08 * Math.sin(time * 0.9)), T(-P[0], -P[1], -P[2]));
+    const head = chain(root, T(0, 0.3, -0.27), T(...P), rotX(0.05 * amp * Math.sin(2 * w + 1)), rotY(0.08 * Math.sin(time * 0.9)), T(-P[0], -P[1], -P[2]));
 
     // -- section 1: KEPALA = satu permukaan utuh; mulut = kantong cekung dengan tepi membulat (bukan lembaran) --
-    draw(headMesh, chain(head, T(0, 1.62, 0.63), S(0.5, 0.48, 0.43)), FUR, 1);
+    draw(headMesh, chain(head, T(0, 1.62-0.3, 0.63), S(0.5, 0.48, 0.43)), FUR, 1);
 
     // -- moncong sudah menjadi tonjolan kepala; hidung = ellipsoid kecil yang setengah tertanam di ujung moncong --
-    draw(ellipsoid, chain(head, T(0, 1.7, 1.18), S(0.1, 0.07, 0.075)), DARK);         // hidung
-    draw(ellipsoid, chain(head, T(0.17, 1.78, 1.0), S(0.06, 0.062, 0.05)), DARK);      // mata
-    draw(ellipsoid, chain(head, T(-0.17, 1.78, 1.0), S(0.06, 0.062, 0.05)), DARK);
+    draw(ellipsoid, chain(head, T(0, 1.7-0.3, 1.18), S(0.1, 0.07, 0.075)), DARK);         // hidung
+    draw(ellipsoid, chain(head, T(0.17, 1.78-0.3, 1.0), S(0.06, 0.062, 0.05)), DARK);      // mata
+    draw(ellipsoid, chain(head, T(-0.17, 1.78-0.3, 1.0), S(0.06, 0.062, 0.05)), DARK);
 
-    // -- lidah menjulur dari mulut ke atas dinding dagu --
-    draw(ellipsoid, chain(head, T(0, 1.36, 0.96 + 0.02 * Math.sin(5 * time)), rotX(0.3), S(0.1, 0.03, 0.26)), TONGUE);
+    // -- dagu: mangkuk dalam dengan dinding depan hampir tegak (terlihat dari depan), dimiringkan sedikit ke depan sehingga tepi depannya melengkung U (senyum) --
+    draw(chinBowl, chain(head, T(0, 1.25, 0.79), rotX(0.4), S(0.3, 0.42, 0.32)), FUR, 5);
+
+    // -- lidah terletak di dalam mangkuk dan menjulur melewati tepi depan --
+    draw(ellipsoid, chain(head, T(0, 1.2, 0.9 + 0.02 * Math.sin(5 * time)), rotX(0.35), S(0.1, 0.03, 0.26)), TONGUE);
 
     // -- telinga: 2 segmen (pangkal frustum + ujung kerucut), radius sambungan sama sehingga mulus,
     //    pangkal lebar tertanam di kepala; bagian dalam pink dilukis di pangkal --
     const twitch = 0.06 * Math.sin(3 * time);
     [1, -1].forEach(sx => {
-      const base = chain(head, T(0.21 * sx, 1.88, 0.56), rotZ(-sx * (0.26 + twitch)));
+      const base = chain(head, T(0.21 * sx, 1.88-0.3, 0.56), rotZ(-sx * (0.26 + twitch)));
       const tip = chain(base, T(0, 0.2, 0));      // sambung di puncak frustum (radius sama)
-      draw(coneFrustum, chain(base, S(0.17, 0.2, 0.13)), FUR);  // segmen 1: pangkal
-      draw(cone, chain(tip, S(0.136, 0.28, 0.104)), FUR);        // segmen 2: ujung (pink menerus di bagian bawah)
+      draw(coneFrustum, chain(base, S(0.17, 0.2, 0.13)), FUR, 3);  // segmen 1: pangkal
+      draw(cone, chain(tip, S(0.136, 0.28, 0.104)), FUR, 4);        // segmen 2: ujung (pink menerus di bagian bawah)
     });
 
     requestAnimationFrame(frame);
