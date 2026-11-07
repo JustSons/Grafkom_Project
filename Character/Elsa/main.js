@@ -81,7 +81,7 @@
   }
 
   const { translation: T, scaling: S, rotX, rotY, rotZ, chain } = Mat4;
-  const FUR = [0.80, 0.66, 0.52], FUR_D = [0.56, 0.45, 0.35], DARK = [0.08, 0.06, 0.05];
+  const FUR = [1, 1, 0.97], FUR_D = [0.56, 0.45, 0.35], DARK = [0.08, 0.06, 0.05];
   const TONGUE = [0.93, 0.5, 0.52], EAR_IN = [0.78, 0.45, 0.42], CAVITY = [0.03, 0.015, 0.015], FUR_L = [0.86, 0.72, 0.57], MOUTH = [0.18, 0.08, 0.07], SHADOW = [0.12, 0.12, 0.12];
 
   /* ---- Kontrol ---- */
@@ -161,8 +161,8 @@
     [1, -1].forEach(sx => {
       const base = chain(head, T(0.21 * sx, 1.88, 0.56), rotZ(-sx * (0.26 + twitch)));
       const tip = chain(base, T(0, 0.2, 0));      // sambung di puncak frustum (radius sama)
-      draw(coneFrustum, chain(base, S(0.17, 0.2, 0.13)), FUR, 3);  // segmen 1: pangkal
-      draw(cone, chain(tip, S(0.136, 0.28, 0.104)), FUR, 4);        // segmen 2: ujung (pink menerus di bagian bawah)
+      draw(coneFrustum, chain(base, S(0.17, 0.2, 0.13)), FUR);  // segmen 1: pangkal
+      draw(cone, chain(tip, S(0.136, 0.28, 0.104)), FUR);        // segmen 2: ujung (pink menerus di bagian bawah)
     });
 
     requestAnimationFrame(frame);
