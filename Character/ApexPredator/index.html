@@ -6,7 +6,13 @@
     <title>Apex Predator – R.E.P.O.</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #0d0d14; overflow: hidden; }
+        body { 
+            background: #0d0d14; 
+            overflow: hidden; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #eee;
+            user-select: none;
+        }
         #mycanvas {
             display: block;
             width: 100vw;
@@ -14,10 +20,198 @@
             cursor: grab;
         }
         #mycanvas:active { cursor: grabbing; }
+
+        /* HUD Panel */
+        .hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(18, 20, 32, 0.85);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            padding: 16px 20px;
+            max-width: 390px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            pointer-events: auto;
+        }
+        .hud h1 {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #ffd21a;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .hud p.sub {
+            font-size: 0.78rem;
+            color: #aaa;
+            margin-bottom: 14px;
+            line-height: 1.3;
+        }
+
+        /* Status Controls & Buttons */
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .btn {
+            flex: 1;
+            padding: 8px 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.18);
+            background: rgba(255,255,255,0.06);
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+        .btn:hover {
+            background: rgba(255,255,255,0.15);
+            border-color: #ffd21a;
+        }
+        .badge {
+            font-size: 0.68rem;
+            padding: 2px 7px;
+            border-radius: 10px;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .badge.active {
+            background: rgba(38, 194, 129, 0.25);
+            color: #2ecc71;
+            border: 1px solid rgba(46, 204, 113, 0.4);
+        }
+        .badge.inactive {
+            background: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+            border: 1px solid rgba(231, 76, 60, 0.35);
+        }
+
+        /* Criteria Checklist */
+        .criteria-title {
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: #88c0d0;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            margin-bottom: 8px;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            padding-top: 10px;
+        }
+        .criteria-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+            font-size: 0.76rem;
+        }
+        .criteria-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            line-height: 1.3;
+        }
+        .criteria-check {
+            color: #2ecc71;
+            font-weight: bold;
+            font-size: 0.85rem;
+        }
+        .criteria-name {
+            font-weight: 600;
+            color: #fff;
+        }
+        .criteria-desc {
+            color: #999;
+            font-size: 0.72rem;
+        }
+
+        .hud-footer {
+            margin-top: 12px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            font-size: 0.72rem;
+            color: #777;
+            display: flex;
+            justify-content: space-between;
+        }
     </style>
 </head>
 <body>
     <canvas id="mycanvas"></canvas>
+
+    <div class="hud">
+        <h1>🐤 Apex Predator (R.E.P.O.)</h1>
+        <p class="sub">Hierarchical Model & Walk Animation Viewer</p>
+
+        <div class="btn-group">
+            <button class="btn" onclick="toggleWalk()">
+                <span>Animasi Jalan [W]</span>
+                <span id="walk-status" class="badge active">AKTIF</span>
+            </button>
+            <button class="btn" onclick="togglePredator()">
+                <span>Mode Paruh [Space]</span>
+                <span id="pred-status" class="badge inactive">NORMAL</span>
+            </button>
+        </div>
+
+        <div class="criteria-title">Syarat Penilaian Grafkom:</div>
+        <ul class="criteria-list">
+            <li class="criteria-item">
+                <span class="criteria-check">✔</span>
+                <div>
+                    <span class="criteria-name">Hierarchical Transformation:</span>
+                    <div class="criteria-desc">Scene Graph pohon relasi: Body ➔ Head & Wings & Legs ➔ Feet ➔ Toes</div>
+                </div>
+            </li>
+            <li class="criteria-item">
+                <span class="criteria-check">✔</span>
+                <div>
+                    <span class="criteria-name">Translate:</span>
+                    <div class="criteria-desc">Vertical bobbing langkah badan & gerakan maju-mundur kepala</div>
+                </div>
+            </li>
+            <li class="criteria-item">
+                <span class="criteria-check">✔</span>
+                <div>
+                    <span class="criteria-name">Rotate (Euler X/Y/Z):</span>
+                    <div class="criteria-desc">Ayunan kaki di hip, waddle panggul kiri-kanan, dan tekukan telapak</div>
+                </div>
+            </li>
+            <li class="criteria-item">
+                <span class="criteria-check">✔</span>
+                <div>
+                    <span class="criteria-name">Scaling (Gepeng Telapak & Jari Kaki):</span>
+                    <div class="criteria-desc">
+                        Hanya telapak kaki & 3 jarinya yang memipih gepeng (Sy: 0.55x, -45%) dan melebar (Sx/Sz: 1.25x) tepat saat menapak lantai, lalu kembali normal saat diangkat. Badan & kepala tetap bulat alami (1.00x).<br>
+                        <span style="display:inline-block; margin-top:2px; color:#ffd21a; font-family:monospace;" id="live-scale-val">Di Udara: NORMAL (Sy: 1.00x, Sx: 1.00x)</span>
+                    </div>
+                </div>
+            </li>
+            <li class="criteria-item">
+                <span class="criteria-check">✔</span>
+                <div>
+                    <span class="criteria-name">Rotate Arbitrary Axis:</span>
+                    <div class="criteria-desc">Sayap & ekor berputar mengelilingi vektor diagonal 3D sembarang (u = [±0.75, 0.30, 0.58]) via formula Rodrigues (bukan sumbu X/Y/Z standar), dengan engsel terkunci rapat di bahu.</div>
+                </div>
+            </li>
+        </ul>
+
+        <div class="hud-footer">
+            <span>Mouse Drag: Orbit Kamera</span>
+            <span>Scroll: Zoom</span>
+        </div>
+    </div>
+
     <script src="libs.js"></script>
     <script src="main.js"></script>
 </body>

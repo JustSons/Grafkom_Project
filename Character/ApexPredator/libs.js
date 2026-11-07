@@ -1,4 +1,4 @@
-﻿var LIBS = {
+var LIBS = {
     degToRad: function (angle) {
         return (angle * Math.PI / 180);
     },
@@ -87,6 +87,106 @@
     makeRotationZ: function(a){
         var c=Math.cos(a),s=Math.sin(a);
         return [c,s,0,0, -s,c,0,0, 0,0,1,0, 0,0,0,1];
+    },
+
+    /**
+     * Matriks rotasi 4x4 terhadap Sumbu Sembarang (Arbitrary Axis)
+     * Menggunakan formula rotasi Rodrigues pada unit vektor (x, y, z)
+     */
+    makeRotationAxis: function(x, y, z, angle) {
+        var len = Math.sqrt(x*x + y*y + z*z);
+        if (len < 1e-6) return this.get_I4();
+        x /= len; y /= len; z /= len;
+        var c = Math.cos(angle);
+        var s = Math.sin(angle);
+        var t = 1 - c;
+        return [
+            t*x*x + c,      t*x*y + s*z,    t*x*z - s*y,    0,
+            t*x*y - s*z,    t*y*y + c,      t*y*z + s*x,    0,
+            t*x*z + s*y,    t*y*z - s*x,    t*z*z + c,      0,
+            0,              0,              0,              1
+        ];
+    },
+
+    rotateAxis: function (m, x, y, z, angle) {
+        var r = this.makeRotationAxis(x, y, z, angle);
+        var res = this.multiply(m, r);
+        for (var i = 0; i < 16; i++) m[i] = res[i];
+    },
+
+    /**
+     * Matriks transformasi lengkap dengan Pivot Point:
+     * Menjamin bagian tubuh tetap INTACT pada engsel (pivot) tanpa putus/copot.
+     * v' = T(P + T) * R * S * T(-P) * v
+     */
+    makePivotTransform: function(px, py, pz, rx, ry, rz, sx, sy, sz, tx, ty, tz) {
+        sx = (sx !== undefined) ? sx : 1;
+        sy = (sy !== undefined) ? sy : 1;
+        sz = (sz !== undefined) ? sz : 1;
+        tx = tx || 0; ty = ty || 0; tz = tz || 0;
+        rx = rx || 0; ry = ry || 0; rz = rz || 0;
+
+        var cx = Math.cos(rx), sx_ang = Math.sin(rx);
+        var cy = Math.cos(ry), sy_ang = Math.sin(ry);
+        var cz = Math.cos(rz), sz_ang = Math.sin(rz);
+
+        // R = Rz * Ry * Rx
+        var r00 = cz*cy,              r01 = cz*sy_ang*sx_ang - sz_ang*cx,  r02 = cz*sy_ang*cx + sz_ang*sx_ang;
+        var r10 = sz_ang*cy,          r11 = sz_ang*sy_ang*sx_ang + cz*cx,  r12 = sz_ang*sy_ang*cx - cz*sx_ang;
+        var r20 = -sy_ang,            r21 = cy*sx_ang,                     r22 = cy*cx;
+
+        // Gabungkan skala (M = R * S)
+        var m00 = r00 * sx, m01 = r01 * sy, m02 = r02 * sz;
+        var m10 = r10 * sx, m11 = r11 * sy, m12 = r12 * sz;
+        var m20 = r20 * sx, m21 = r21 * sy, m22 = r22 * sz;
+
+        // Translasi pivot: v' = M*(v - P) + P + T = M*v + (P + T - M*P)
+        var txFinal = px + tx - (m00*px + m01*py + m02*pz);
+        var tyFinal = py + ty - (m10*px + m11*py + m12*pz);
+        var tzFinal = pz + tz - (m20*px + m21*py + m22*pz);
+
+        return [
+            m00, m10, m20, 0,
+            m01, m11, m21, 0,
+            m02, m12, m22, 0,
+            txFinal, tyFinal, tzFinal, 1
+        ];
+    },
+
+    /**
+     * Matriks transformasi dengan Pivot Point & Rotasi Sumbu Sembarang (Arbitrary Axis):
+     * Memutar objek mengelilingi sumbu sembarang (ax, ay, az) dengan pusat di pivot (px, py, pz).
+     */
+    makePivotTransformAxis: function(px, py, pz, ax, ay, az, angle, sx, sy, sz, tx, ty, tz) {
+        sx = (sx !== undefined) ? sx : 1;
+        sy = (sy !== undefined) ? sy : 1;
+        sz = (sz !== undefined) ? sz : 1;
+        tx = tx || 0; ty = ty || 0; tz = tz || 0;
+
+        var len = Math.sqrt(ax*ax + ay*ay + az*az);
+        if (len < 1e-6) return this.get_I4();
+        var x = ax / len, y = ay / len, z = az / len;
+
+        var c = Math.cos(angle), s = Math.sin(angle), t = 1 - c;
+
+        var r00 = t*x*x + c,   r01 = t*x*y - s*z, r02 = t*x*z + s*y;
+        var r10 = t*x*y + s*z, r11 = t*y*y + c,   r12 = t*y*z - s*x;
+        var r20 = t*x*z - s*y, r21 = t*y*z + s*x, r22 = t*z*z + c;
+
+        var m00 = r00 * sx, m01 = r01 * sy, m02 = r02 * sz;
+        var m10 = r10 * sx, m11 = r11 * sy, m12 = r12 * sz;
+        var m20 = r20 * sx, m21 = r21 * sy, m22 = r22 * sz;
+
+        var txFinal = px + tx - (m00*px + m01*py + m02*pz);
+        var tyFinal = py + ty - (m10*px + m11*py + m12*pz);
+        var tzFinal = pz + tz - (m20*px + m21*py + m22*pz);
+
+        return [
+            m00, m10, m20, 0,
+            m01, m11, m21, 0,
+            m02, m12, m22, 0,
+            txFinal, tyFinal, tzFinal, 1
+        ];
     },
 
     copy: function(m){ return m.slice(); }
