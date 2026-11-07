@@ -122,6 +122,15 @@ const M = {
         m[5] = c;
         return m;
     },
+    RA(axis, a) { // rotasi mengelilingi sumbu sembarang (rumus Rodrigues)
+        const l = Math.hypot(axis[0], axis[1], axis[2]);
+        const x = axis[0] / l, y = axis[1] / l, z = axis[2] / l;
+        const c = Math.cos(a), s = Math.sin(a), k = 1 - c, m = M.id();
+        m[0] = k * x * x + c;     m[1] = k * x * y + s * z; m[2] = k * x * z - s * y;
+        m[4] = k * x * y - s * z; m[5] = k * y * y + c;     m[6] = k * y * z + s * x;
+        m[8] = k * x * z + s * y; m[9] = k * y * z - s * x; m[10] = k * z * z + c;
+        return m;
+    },
     persp(f, a, n, r) {
         const t = 1 / Math.tan(f / 2), m = new Float32Array(16);
         m[0] = t / a;
@@ -239,7 +248,7 @@ const mMain = solidCyl(.34, .36); // badan atas
 const mCollar = solidCyl(.315, .13); // kerah / leher
 const mHeadCyl = solidCyl(R_HEAD, .15); // sisi kepala
 const mHinge = solidCyl(.026, .075); // engsel kecil di belakang kepala
-const mHealthLed = solidCyl(1, 1); // unit silinder pipih health bar
+const mHealthSquare = box(1, 1, 1); // unit kotak health bar
 const mSeamBand = buildMesh([part(createCylinder(1, 1, SEG))]); // dinding silinder satuan untuk garis sambungan
 const mDome = DOME_TYPE === 'rounded'
     ? buildMesh([part(createRoundedDome(R_HEAD, H_DOME, SEG)), disk(R_HEAD, 0)])
@@ -302,6 +311,7 @@ for (let i = -5; i <= 5; i++) {
     grid.push([i, 0, -5], [i, 0, 5], [-5, 0, i], [5, 0, i]);
 }
 
+let raT = 0; // sudut putar sumbu sembarang (terus bertambah saat state 'spin')
 let ang = 0, t = 0, state = 'idle', health = MAX_HP, hit = 0, TAU = Math.PI * 2;
 
 function drawBot(P, bl, body) {
@@ -312,6 +322,7 @@ function drawBot(P, bl, body) {
         M.RY(P.yaw),
         M.S(q, P.sy, q),
         M.T(0, .9, 0),
+        M.RA([1, 1, 0], P.ra), // putar mengelilingi sumbu miring (1,1,0)
         M.RX(P.tx),
         M.RZ(P.tz),
         M.T(0, -.9, 0)
@@ -336,8 +347,8 @@ function drawBot(P, bl, body) {
         const th = -.5 + i / (MAX_HP - 1);
         const on = i < health && !(health <= 2 && Math.sin(t * 10) > 0);
         const L = mm(root, M.T(.319 * Math.sin(th), 1.385, -.319 * Math.cos(th)), M.RY(Math.PI - th));
-        draw(mHealthLed, mm(L, M.RX(Math.PI / 2), M.S(.016, .005, .016)), COL.plate);
-        draw(mHealthLed, mm(L, M.T(0, 0, .007), M.RX(Math.PI / 2), M.S(.011, .003, .011)), on ? lit : COL.ledOff, on);
+        draw(mHealthSquare, mm(L, M.S(.016, .016, .005)), COL.plate);
+        draw(mHealthSquare, mm(L, M.T(0, 0, .007), M.S(.011, .011, .003)), on ? lit : COL.ledOff, on);
     }
     /* kepala: silinder + kubah (potongan bola) */
     const Hd = mm(root, M.T(0, 1.47, 0), M.RY(P.hy), M.RX(P.hp));
@@ -409,6 +420,9 @@ function target(st, t, y0) {
             hy: .1 * s(p / 2), lx: 0, ly: 0, sy: 1, flop: .5 * s(2 * p), tw: 0
         });
     }
+    if (st === 'spin') {
+        Object.assign(P, { bob: .75, az: .8, aL: -.3, aR: -.3, swL: -.4, swR: .4, flop: .7, sy: 1, tw: 0, hy: 0, lx: 0, ly: 0 });
+    }
     if (st === 'jump') {
         const u = t * 3, h = Math.abs(s(u)), g = 1 - h, v = c(u) * Math.sign(s(u));
         Object.assign(P, {
@@ -468,6 +482,7 @@ function pick(b, s) {
 pick(btn('Diam', b => pick(b, 'idle'), true), 'idle');
 btn('Jalan', b => pick(b, 'walk'), true);
 btn('Lompat', b => pick(b, 'jump'), true);
+btn('Putar', b => pick(b, 'spin'), true);
 btn('Hit (-1 HP)', () => {
     health = Math.max(0, health - 1);
     hit = 1;
@@ -502,12 +517,15 @@ function frame(now) {
     last = now;
     t += dt;
     if (state === 'walk') ang += dt * .8;
+    if (state === 'spin') raT += dt * 4;
+    else raT += (Math.round(raT / TAU) * TAU - raT) * (1 - Math.exp(-dt * 7)); // kembali halus ke pose tegak
     hit = Math.max(0, hit - dt * 2.2);
     if (!drag) cy += (cyT - cy) * (1 - Math.exp(-dt * 6));
     const T = target(state, t, cur.yaw), k = 1 - Math.exp(-dt * 7);
     for (const key in T) cur[key] += (T[key] - cur[key]) * k;
     // efek terkena hit (di atas pose saat ini): terhuyung ke belakang, bergetar, telinga terlempar, mata menyipit
     const D = Object.assign({}, cur, {
+        ra: raT,
         tx: cur.tx - .35 * hit,
         shx: cur.shx + .03 * Math.sin(60 * t) * hit,
         flop: cur.flop + 1.4 * hit,
