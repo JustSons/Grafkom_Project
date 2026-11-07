@@ -158,7 +158,9 @@ function syncBtn() {
     const on = '#d98a2b', off = '#1d2129';
     btns.orbit.style.background = mode === 'orbit' ? on : off; btns.fly.style.background = mode === 'fly' ? on : off;
     btns.ref.style.background = showRef ? on : off;
+    btns.scene.style.background = mode === 'scene' ? on : off;
 }
+btn('scene', 'Adegan', () => { mode = 'scene'; syncBtn() });
 btn('orbit', 'Orbit bebas', () => { mode = 'orbit'; syncBtn() });
 btn('fly', 'Fly-through', () => { mode = 'fly'; syncBtn() });
 btn('ref', 'Patokan skala', () => { showRef = !showRef; syncBtn() });
@@ -174,15 +176,20 @@ let t = 0, last = performance.now();
 function frame(now) {
     const dt = Math.min(.05, (now - last) / 1000); last = now; t += dt;
     resize();
+    const SC = typeof Scene !== 'undefined';
+    if (SC) Scene.update(dt);
+    const sceneOn = SC && Scene.on();
     gl.clearColor(FOG[0], FOG[1], FOG[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    V = viewMatrix(t);
+    V = sceneOn ? Scene.view() : viewMatrix(t);
     gl.uniformMatrix4fv(U.uPr, false, Pr);
-    gl.uniform3fv(U.uFog, FOG); gl.uniform1f(U.uFogD, .03); gl.uniform3fv(U.uAmb, [.17, .17, .16]);
-    const lights = Environment.getLights(t), lp = [], lc = [];
+    const ak = sceneOn ? Scene.ambK() : 1;
+    gl.uniform3fv(U.uFog, FOG); gl.uniform1f(U.uFogD, .03); gl.uniform3fv(U.uAmb, [.17 * ak, .17 * ak, .16 * ak]);
+    const lights = sceneOn ? Scene.lights() : Environment.getLights(t), lp = [], lc = [];
     for (const l of lights) { lp.push(...toView(V, l.pos)); lc.push(...l.col) }
     gl.uniform3fv(U['uLP[0]'], lp); gl.uniform3fv(U['uLC[0]'], lc);
 
     Environment.draw(gfx);
+    if (sceneOn) Scene.draw(gfx);
 
     if (showRef) {     // patokan ukuran (kotak): Semibot 2.0, Apex 1.5, Elsa bahu 0.9; magenta = titik sembunyi Elsa
         const h = Environment.elsaHide;
