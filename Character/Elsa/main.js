@@ -35,9 +35,9 @@
         mc = vec3(0.80, 0.46, 0.43) * (0.45 + 0.7 * d); dk = 1.0;
       }
       else if (uMouth > 0.5) { // kepala: bagian dalam kantong mulut (atap hitam, lantai cokelat muda) mengikuti kedalaman
-        float r = length(vL), im = 1.0 - smoothstep(0.82, 0.97, r);
+        float r = length(vL), im = 1.0 - smoothstep(0.86, 0.985, r);
         float fl = 1.0 - smoothstep(-0.31, -0.19, vL.y);
-        col = mix(col, col * mix(vec3(0.04), vec3(0.36, 0.29, 0.25), fl), im);
+        col = mix(col, col * mix(vec3(0.02), vec3(0.36, 0.29, 0.25), fl), im);
       }
       col = mix(col, col * vec3(0.64, 0.6, 0.56), dk);
       col = mix(col, mc, mk);
@@ -66,8 +66,8 @@
     [[0, 0, 0], [0, 0.04, -0.14], [0, 0.2, -0.2], [0, 0.36, -0.1]],
     t => Math.max(0.02, 0.075 * (1 - 0.6 * t) * Math.sqrt(Math.max(0, 1 - Math.pow(Math.max(0, (t - 0.85) / 0.15), 2))))));
 
-  // kepala: SATU permukaan utuh (ellipsoid + kantong mulut cekung berbibir membulat), tidak ada lembaran terpisah
-  const headMesh = createMesh(gl, Geo.carvedEllipsoid(150, 220, [0, -0.5, 0.866], 0.55, 0.38, 0.5));
+  // kepala: SATU permukaan utuh hasil pahatan satu ellipsoid -- moncong, kantong mulut (senyum) dan dagu rata ikut permukaan yang sama
+  const headMesh = createMesh(gl, Geo.sculptedHead(150, 220, { mouth: { smile: 0.75 }, chin: { yBot: -0.8, yBot2: -1.0, wEdge: 0.45, zPlane: 0.82 } }));
 
   function draw(mesh, M, color, mouth) {
     gl.uniformMatrix4fv(uModel, false, M);
@@ -145,23 +145,15 @@
     const head = chain(root, T(0, 0, -0.27), T(...P), rotX(0.05 * amp * Math.sin(2 * w + 1)), rotY(0.08 * Math.sin(time * 0.9)), T(-P[0], -P[1], -P[2]));
 
     // -- section 1: KEPALA = satu permukaan utuh; mulut = kantong cekung dengan tepi membulat (bukan lembaran) --
-    draw(headMesh, chain(head, T(0, 1.62, 0.63), S(0.45, 0.46, 0.43)), FUR, 1);
+    draw(headMesh, chain(head, T(0, 1.62, 0.63), S(0.5, 0.48, 0.43)), FUR, 1);
 
-    // lapisan dalam mulut: ellipsoid cokelat tua di dasar kantong (tertutup dinding kantong, hanya terlihat lewat bukaan mulut)
-    draw(ellipsoid, chain(head, T(0, 1.46, 0.7), S(0.21, 0.13, 0.14)), [0.13, 0.075, 0.06]);
+    // -- moncong sudah menjadi tonjolan kepala; hidung = ellipsoid kecil yang setengah tertanam di ujung moncong --
+    draw(ellipsoid, chain(head, T(0, 1.7, 1.18), S(0.1, 0.07, 0.075)), DARK);         // hidung
+    draw(ellipsoid, chain(head, T(0.17, 1.78, 1.0), S(0.06, 0.062, 0.05)), DARK);      // mata
+    draw(ellipsoid, chain(head, T(-0.17, 1.78, 1.0), S(0.06, 0.062, 0.05)), DARK);
 
-    // -- section 2: moncong + hidung (terpisah dari mulut) + mata --
-    draw(ellipsoid, chain(head, T(0, 1.62, 0.97), S(0.24, 0.13, 0.24)), FUR);          // moncong
-    draw(ellipsoid, chain(head, T(0, 1.68, 1.17), S(0.1, 0.07, 0.075)), DARK);         // hidung
-    draw(ellipsoid, chain(head, T(0.17, 1.75, 1.0), S(0.06, 0.062, 0.05)), DARK);      // mata
-    draw(ellipsoid, chain(head, T(-0.17, 1.75, 1.0), S(0.06, 0.062, 0.05)), DARK);
-
-    // -- section 3: dagu/rahang bawah (warna & lengkung menyatu dengan kepala dan dada; berengsel di belakang) + lidah --
-    const J = [0, 1.38, 0.35];
-    const openAng = 0.14 + 0.08 * Math.sin(2.2 * time);
-    const jaw = chain(head, T(...J), rotX(openAng), T(-J[0], -J[1], -J[2]));
-    draw(ellipsoid, chain(jaw, T(0, 1.3, 0.9), S(0.26, 0.1, 0.2)), FUR);               // dagu
-    draw(ellipsoid, chain(jaw, T(0, 1.42, 0.95 + 0.015 * Math.sin(5 * time)), rotX(0.35), S(0.1, 0.03, 0.24)), TONGUE);
+    // -- lidah menjulur dari mulut ke atas dinding dagu --
+    draw(ellipsoid, chain(head, T(0, 1.36, 0.96 + 0.02 * Math.sin(5 * time)), rotX(0.3), S(0.1, 0.03, 0.26)), TONGUE);
 
     // -- telinga: 2 segmen (pangkal frustum + ujung kerucut), radius sambungan sama sehingga mulus,
     //    pangkal lebar tertanam di kepala; bagian dalam pink dilukis di pangkal --

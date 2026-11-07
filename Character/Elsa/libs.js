@@ -154,6 +154,57 @@ const Geo = {
     return { positions: Array.from(pos), normals: Array.from(nor), indices };
   },
 
+  // OBJEK 1c: kepala dipahat dari SATU ellipsoid satuan: (1) moncong menonjol ke depan, (2) kantong mulut cekung halus
+  // berlengkung senyum, (3) dagu berupa dinding vertikal rata di bawah mulut. Semuanya satu permukaan, tanpa sambungan.
+  sculptedHead(stacks = 150, slices = 220, o = {}) {
+    const mo = Object.assign({ m: [0, -0.77, 0.866], a: 0.7, b: 0.45, depth: 0.9, smile: 0.3, pw: 2.9, soft: 0.3 }, o.mouth || {});
+    const sn = Object.assign({ y0: 0.02, a: 0.65, b: 0.3, push: 0.34, droop: 0.05 }, o.snout || {});
+    const mm = Vec3.normalize(mo.m), e1 = [1, 0, 0], e2 = Vec3.normalize(Vec3.cross(mm, e1));
+    const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const W = slices + 1, N = (stacks + 1) * W;
+    const pos = new Float32Array(N * 3), nor = new Float32Array(N * 3), indices = [];
+    for (let i = 0; i <= stacks; i++) {
+      const th = (i * Math.PI) / stacks;
+      for (let j = 0; j <= slices; j++) {
+        const ph = (j * 2 * Math.PI) / slices;
+        const p = [Math.sin(th) * Math.cos(ph), Math.cos(th), Math.sin(th) * Math.sin(ph)];
+        const q = p.slice();
+        // (1) moncong: dorong ke depan (sedikit menunduk)
+        const ws = (1 - sstep(0.1, 1.2, Math.hypot(p[0] / sn.a, (p[1] - sn.y0) / sn.b))) * sstep(0.3, 0.6, p[2]);
+        q[2] += sn.push * ws; q[1] -= sn.droop * sn.push * ws;
+        // (2) kantong mulut: mangkuk cekung halus; garis tengahnya melengkung ke atas di sudut = senyum
+        const u = Vec3.dot(p, e1) / mo.a, v = Vec3.dot(p, e2) / mo.b - mo.smile * u * u;
+        const s = Math.pow(Math.pow(Math.abs(u), mo.pw) + Math.pow(Math.abs(v), mo.pw), 1 / mo.pw);
+        const w = (1 - sstep(mo.soft, 1.0, s)) * sstep(0.1, 0.4, Vec3.dot(p, mm));
+        const k = 1 - mo.depth * w, off = (i * W + j) * 3;
+        pos[off] = q[0] * k; pos[off + 1] = q[1] * k; pos[off + 2] = q[2] * k;
+      }
+    }
+    for (let i = 0; i < stacks; i++)
+      for (let j = 0; j < slices; j++) {
+        const p0 = i * W + j, p1 = p0 + W, p2 = p0 + 1, p3 = p1 + 1;
+        indices.push(p0, p1, p2, p1, p3, p2);
+        for (const [x, y, z] of [[p0, p1, p2], [p1, p3, p2]]) {
+          const A = [pos[x * 3], pos[x * 3 + 1], pos[x * 3 + 2]], B = [pos[y * 3], pos[y * 3 + 1], pos[y * 3 + 2]], C = [pos[z * 3], pos[z * 3 + 1], pos[z * 3 + 2]];
+          const n = Vec3.cross(Vec3.sub(C, A), Vec3.sub(B, A));
+          for (const qv of [x, y, z]) { nor[qv * 3] += n[0]; nor[qv * 3 + 1] += n[1]; nor[qv * 3 + 2] += n[2]; }
+        }
+      }
+    const merge = (list) => {
+      let sx = 0, sy = 0, sz = 0;
+      for (const qv of list) { sx += nor[qv * 3]; sy += nor[qv * 3 + 1]; sz += nor[qv * 3 + 2]; }
+      for (const qv of list) { nor[qv * 3] = sx; nor[qv * 3 + 1] = sy; nor[qv * 3 + 2] = sz; }
+    };
+    for (let i = 1; i < stacks; i++) merge([i * W, i * W + slices]);
+    merge(Array.from({ length: W }, (_, j) => j));
+    merge(Array.from({ length: W }, (_, j) => stacks * W + j));
+    for (let qv = 0; qv < N; qv++) {
+      const l = Math.hypot(nor[qv * 3], nor[qv * 3 + 1], nor[qv * 3 + 2]) || 1;
+      nor[qv * 3] /= l; nor[qv * 3 + 1] /= l; nor[qv * 3 + 2] /= l;
+    }
+    return { positions: Array.from(pos), normals: Array.from(nor), indices };
+  },
+
   // OBJEK 2: Elliptic cone / frustum kerucut (quadric, BUKAN ellipsoid/cylinder).
   // Alas di y=0 (radius 1), puncak/atas di y=1 (radius topR; topR=0 -> kerucut penuh)
   cone(slices = 32, topR = 0) {
