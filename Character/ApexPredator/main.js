@@ -303,9 +303,10 @@
     const squashL = 1 - 0.45 * contactL, spreadL = 1 + 0.25 * contactL, squashR = 1 - 0.45 * contactR, spreadR = 1 + 0.25 * contactR;
     // [x, ayun kaki, splay, ayun ankle, squash Y, melebar XZ] untuk kiri lalu kanan (kanan berlawanan fase)
     for (const [x, sw, sp, ank, sq, spr] of [[-0.34, swing, -splay, -0.55 * swing, squashL, spreadL], [0.34, -swing, splay, 0.55 * swing, squashR, spreadR]]) {
-      const leg = chain(body, T(x, -1.52, 0.05), pivot(0, 0.75, 0, sw, 0, sp, 1, 1, 1, 0, 0, 0));
-      draw(G.leg, leg, C.leg);
-      const foot = chain(leg, T(0, -0.04, 0.16), pivot(0, -0.08, 0, ank, 0, 0, spr, sq, spr, 0, 0, 0));
+      const legStretch = 1 + 0.16 * (1 - sq) / 0.75;
+      const hip = chain(body, T(x, -1.52, 0.05), pivot(0, 0.75, 0, sw, 0, sp, 1, 1, 1, 0, 0, 0));
+      draw(G.leg, chain(hip, pivot(0, 0.75, 0, 0, 0, 0, 1, legStretch, 1, 0, 0, 0)), C.leg);
+      const foot = chain(hip, T(0, -0.04, 0.16), pivot(0, -0.08, 0, ank, 0, 0, spr, sq, spr, 0, 0, 0));
       draw(G.foot, foot, C.foot);
       draw(G.toeSide, chain(foot, T(-0.18, 0, 0.30), rotY(-0.22)), C.toe);
       draw(G.toeMid, chain(foot, T(0, 0, 0.35)), C.toe);
