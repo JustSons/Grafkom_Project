@@ -1,3 +1,4 @@
+(function () {
 'use strict';
 /* Semibot (R.E.P.O.) + Bunny Ears - WebGL murni, memakai fungsi di libs.js */
 
@@ -314,10 +315,10 @@ for (let i = -5; i <= 5; i++) {
 let raT = 0; // sudut putar sumbu sembarang (terus bertambah saat state 'spin')
 let ang = 0, t = 0, state = 'idle', health = MAX_HP, hit = 0, TAU = Math.PI * 2;
 
-function drawBot(P, body) {
+function drawBot(P, body, externalRoot) {
     const q = 1 / Math.sqrt(P.sy); // squash & stretch menjaga volume
     const seam = body.map(channel => channel * .32);
-    const root = mm(
+    const localRoot = mm(
         M.T(P.R * Math.sin(ang) + P.shx, P.bob, P.R * Math.cos(ang)),
         M.RY(P.yaw),
         M.S(q, P.sy, q),
@@ -327,6 +328,18 @@ function drawBot(P, body) {
         M.RZ(P.tz),
         M.T(0, -.9, 0)
     );
+    const root = externalRoot
+        ? mm(
+            externalRoot,
+            M.T(P.shx, P.bob, 0),
+            M.S(q, P.sy, q),
+            M.T(0, .9, 0),
+            M.RA([1, 1, 0], P.ra),
+            M.RX(P.tx),
+            M.RZ(P.tz),
+            M.T(0, -.9, 0)
+        )
+        : localRoot;
     for (const s of [-1, 1]) { // kaki: kerucut, pivot di pinggul
         const H = mm(root, M.T(s * .145, .6, 0), M.RX(s < 0 ? P.swL : P.swR));
         draw(mLeg, mm(H, M.T(0, -.30, 0), M.RX(Math.PI)), body);
@@ -389,6 +402,48 @@ function drawBot(P, body) {
     });
 }
 
+function drawSemibot(gfx, root, pose, sceneTime, o = {}) {
+    if (!gfx || gfx.gl !== gl || !gfx.getV || !gfx.getPr || !gfx.pg) {
+        throw new TypeError('drawSemibot membutuhkan renderer Master Scene pada WebGL context yang sama.');
+    }
+
+    const mappedPose = pose === 'run' ? 'walk' : pose === 'tumble' ? 'spin' : pose;
+    const P = target(mappedPose, sceneTime, 0);
+    P.R = 0;
+    P.yaw = 0;
+    P.ra = pose === 'tumble' ? (o.spin || 0) : 0;
+    P.sy = Math.max(.4, 1 - .2 * (o.sq || 0));
+    P.tx = o.lean || 0;
+    P.shx = 0;
+
+    if (pose === 'walk' || pose === 'run') {
+        const phase = o.ph || 0, strength = o.k === undefined ? 1 : o.k;
+        P.swL = .65 * Math.sin(phase) * strength;
+        P.swR = -.65 * Math.sin(phase) * strength;
+        P.aL = -.6 * Math.sin(phase) * strength;
+        P.aR = .6 * Math.sin(phase) * strength;
+        P.bob = .05 * Math.abs(Math.cos(phase)) * strength;
+        P.hy = .1 * Math.sin(phase / 2);
+        P.lx = 0;
+        P.ly = 0;
+        P.flop = .5 * Math.sin(2 * phase);
+        P.tw = 0;
+    }
+
+    t = sceneTime;
+    V = gfx.getV();
+    gl.useProgram(pg);
+    gl.enableVertexAttribArray(aP);
+    gl.enableVertexAttribArray(aN);
+    gl.uniformMatrix4fv(U.uPr, false, gfx.getPr());
+    try {
+        drawBot(P, rgb('#e02020'), root);
+    } finally {
+        gl.useProgram(gfx.pg);
+    }
+}
+window.drawSemibot = drawSemibot;
+
 /* ===== 6. Animasi: target tiap state di-lerp agar halus ===== */
 function target(st, t, y0) {
     const s = Math.sin, c = Math.cos;
@@ -439,6 +494,7 @@ function setState(s) {
 }
 
 /* ===== 7. Kamera, UI, loop ===== */
+if (!window.MASTER_SCENE) {
 let cy = -.4, cyT = -.4, cp = .12, dist = 8.5, drag = 0, lx0 = 0, ly0 = 0;
 canvas.onpointerdown = e => {
     drag = 1;
@@ -543,3 +599,5 @@ function frame(now) {
     requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+}
+})();
