@@ -296,24 +296,6 @@ function draw(m, model, col, flat) {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.ib);
     gl.drawElements(gl.TRIANGLES, m.n, gl.UNSIGNED_SHORT, 0);
 }
-const lb = gl.createBuffer();
-function lines(pts, col) {
-    const d = new Float32Array(pts.length * 6);
-    pts.forEach((p, i) => d.set(p, i * 6));
-    gl.uniformMatrix4fv(U.uMV, false, V);
-    gl.uniform3fv(U.uC, col);
-    gl.uniform1f(U.uFlat, 1);
-    gl.bindBuffer(gl.ARRAY_BUFFER, lb);
-    gl.bufferData(gl.ARRAY_BUFFER, d, gl.DYNAMIC_DRAW);
-    gl.vertexAttribPointer(aP, 3, gl.FLOAT, false, 24, 0);
-    gl.vertexAttribPointer(aN, 3, gl.FLOAT, false, 24, 12);
-    gl.drawArrays(gl.LINES, 0, pts.length);
-}
-const grid = [];
-for (let i = -5; i <= 5; i++) {
-    grid.push([i, 0, -5], [i, 0, 5], [-5, 0, i], [5, 0, i]);
-}
-
 let raT = 0; // sudut putar sumbu sembarang (terus bertambah saat state 'spin')
 let ang = 0, t = 0, state = 'idle', health = MAX_HP, hit = 0, TAU = Math.PI * 2;
 let sceneLight = 1;
@@ -603,7 +585,6 @@ function frame(now) {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     V = mm(M.T(0, 0, -dist), M.RX(cp), M.RY(cy), M.T(0, -1.3, 0));
     gl.uniformMatrix4fv(U.uPr, false, Pr);
-    lines(grid, [.16, .19, .24]);
     drawBot(D, BODY_COLOR);
     requestAnimationFrame(frame);
 }

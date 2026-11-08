@@ -116,9 +116,9 @@
     const bodyScale = ELSA_SCALE * scale;
     const rootElsa = chain(root, S(bodyScale, bodyScale, bodyScale), T(0, bob, 0));   // skala dulu, lalu gerak naik-turun (ikut mengecil)
 
-    draw(ellipsoid, chain(rootElsa, T(0, 0.85, -0.14), S(0.44, 0.4, 0.6)), FUR);
-    draw(ellipsoid, chain(rootElsa, T(0, 1, 0.25), S(0.44, 0.5, 0.45)), FUR);
-    draw(tailTube, chain(rootElsa, T(0, 0.98, -0.66), rotArbitraryAxis(0.5 * Math.sin(8 * t), 0.2, 1, 0.35), rotX(0.1)), FUR);
+    draw(ellipsoid, chain(rootElsa, T(0, 0.85, -0.14), S(0.44, 0.4, 0.6)), FUR); // badan
+    draw(ellipsoid, chain(rootElsa, T(0, 1, 0.25), S(0.44, 0.5, 0.45)), FUR); // leher
+    draw(tailTube, chain(rootElsa, T(0, 0.98, -0.66), rotArbitraryAxis(0.5 * Math.sin(8 * t), 0.2, 1, 0.35), rotX(0.1)), FUR); // ekor
 
     [[0.25, 0.36, 0, false], [-0.25, 0.36, Math.PI, false], [0.26, -0.46, Math.PI, true], [-0.26, -0.46, 0, true]].forEach(([x, z, ph, hind]) => {
       const sx = Math.sign(x);
