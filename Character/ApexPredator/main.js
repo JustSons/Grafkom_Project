@@ -205,7 +205,8 @@
     const rf = Math.sqrt(0.10), fx = a * rf * 0.65, fy = dirY * b * rf - dirY * 0.035;
     addTooth(-fx, fy, D - 0.10, isUpper ? 0.32 : 0.26, 0.058, -1);
     addTooth(fx, fy, D - 0.10, isUpper ? 0.32 : 0.26, 0.058, 1);
-    return { shell: makeMesh(generateEllipticParaboloid(a, b, rMax, 24, 40)), teeth: makeMesh(merge(teeth)) };
+    const shell = place(generateEllipticParaboloid(a, b, rMax, 24, 40), chain(T(0, 0, D), rotX(-PI / 2)));
+    return { shell: makeMesh(shell), teeth: makeMesh(merge(teeth)) };
   }
 
   let prog, aPos, aNorm, uModel, uVP, uColor, uTint, G;
@@ -278,12 +279,12 @@
 
     // RAHANG PREDATOR (mode monster): engsel di sudut mulut, membuka sesuai pred (+ menganga saat meraung)
     if (show) {
-      const up = chain(head, T(0, -0.16, 0.75), rotX(-(JAW_OPEN_UP * pred + 0.30 * roar * pred)));
-      const dn = chain(head, T(0, -0.50, 0.75), rotX(JAW_OPEN_DOWN * pred + 0.25 * roar * pred));
-      draw(G.jawUpper.shell, chain(up, T(0, 0, D_UP), rotX(-PI / 2)), C.jaw);     // sumbu paraboloid (+y) -> -z, ujung di depan
-      draw(G.jawUpper.teeth, up, C.fang);
-      draw(G.jawLower.shell, chain(dn, T(0, 0, D_DOWN), rotX(-PI / 2)), C.jaw);
-      draw(G.jawLower.teeth, dn, C.fang);
+      const upperJaw = chain(head, T(0, -0.16, 0.75), rotX(-(JAW_OPEN_UP * pred + 0.30 * roar * pred)));
+      const lowerJaw = chain(head, T(0, -0.50, 0.75), rotX(JAW_OPEN_DOWN * pred + 0.25 * roar * pred));
+      draw(G.jawUpper.shell, upperJaw, C.jaw);
+      draw(G.jawUpper.teeth, upperJaw, C.fang);
+      draw(G.jawLower.shell, lowerJaw, C.jaw);
+      draw(G.jawLower.teeth, lowerJaw, C.fang);
       draw(G.mouth, chain(head, T(0, -0.33, 0.90)), C.mouth);
     }
 
@@ -304,9 +305,9 @@
     // [x, ayun kaki, splay, ayun ankle, squash Y, melebar XZ] untuk kiri lalu kanan (kanan berlawanan fase)
     for (const [x, sw, sp, ank, sq, spr] of [[-0.34, swing, -splay, -0.55 * swing, squashL, spreadL], [0.34, -swing, splay, 0.55 * swing, squashR, spreadR]]) {
       const legStretch = 1 + 0.16 * (1 - sq) / 0.75;
-      const hip = chain(body, T(x, -1.52, 0.05), pivot(0, 0.75, 0, sw, 0, sp, 1, 1, 1, 0, 0, 0));
-      draw(G.leg, chain(hip, pivot(0, 0.75, 0, 0, 0, 0, 1, legStretch, 1, 0, 0, 0)), C.leg);
-      const foot = chain(hip, T(0, -0.04, 0.16), pivot(0, -0.08, 0, ank, 0, 0, spr, sq, spr, 0, 0, 0));
+      const leg = chain(body, T(x, -1.52, 0.05), pivot(0, 0.75, 0, sw, 0, sp, 1, 1, 1, 0, 0, 0));
+      draw(G.leg, chain(leg, pivot(0, 0.75, 0, 0, 0, 0, 1, legStretch, 1, 0, 0, 0)), C.leg);
+      const foot = chain(leg, T(0, -0.04, 0.16), pivot(0, -0.08, 0, ank, 0, 0, spr, sq, spr, 0, 0, 0));
       draw(G.foot, foot, C.foot);
       draw(G.toeSide, chain(foot, T(-0.18, 0, 0.30), rotY(-0.22)), C.toe);
       draw(G.toeMid, chain(foot, T(0, 0, 0.35)), C.toe);
