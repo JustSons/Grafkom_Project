@@ -314,7 +314,7 @@ for (let i = -5; i <= 5; i++) {
 let raT = 0; // sudut putar sumbu sembarang (terus bertambah saat state 'spin')
 let ang = 0, t = 0, state = 'idle', health = MAX_HP, hit = 0, TAU = Math.PI * 2;
 
-function drawBot(P, bl, body) {
+function drawBot(P, body) {
     const q = 1 / Math.sqrt(P.sy); // squash & stretch menjaga volume
     const seam = body.map(channel => channel * .32);
     const root = mm(
@@ -365,11 +365,11 @@ function drawBot(P, bl, body) {
     const dx = P.lx * .35 / dl, dy = P.ly * .35 / dl, dz = 1 / dl;
     for (const s of [-1, 1]) { // mata: bagian putih dan pupil dibuat matte
         const ex = s * .16, ey = .16, ez = .225;
-        draw(mBall, mm(Hd, M.T(ex, ey, ez), M.S(.108, .108 * bl, .108)), COL.white, true);
+        draw(mBall, mm(Hd, M.T(ex, ey, ez), M.S(.108, .108, .108)), COL.white, true);
         draw(mBall, mm(
             Hd,
-            M.T(ex + dx * .097, ey + dy * .097 * bl, ez + dz * .097),
-            M.S(.03, .03 * bl, .02)
+            M.T(ex + dx * .097, ey + dy * .097, ez + dz * .097),
+            M.S(.03, .03, .02)
         ), COL.black, true);
     }
     /* telinga kelinci: tabung di sepanjang kurva Bezier kubik 3D yang dihitung ulang tiap frame */
@@ -533,15 +533,13 @@ function frame(now) {
         ly: cur.ly * (1 - hit),
         hp: cur.hp - .2 * hit
     });
-    const bl = Math.max(0, 1 - Math.abs((t % 3.7) - .1) / .1) * .92;
-    const eye = (1 - bl) * (1 - .6 * hit);
     resize();
     gl.clearColor(.05, .06, .08, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     V = mm(M.T(0, 0, -dist), M.RX(cp), M.RY(cy), M.T(0, -1.3, 0));
     gl.uniformMatrix4fv(U.uPr, false, Pr);
     lines(grid, [.16, .19, .24]);
-    drawBot(D, Math.max(.08, eye), rgb(colEl.value));
+    drawBot(D, rgb(colEl.value));
     requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
