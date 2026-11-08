@@ -169,6 +169,17 @@ const Scene = (() => {
         }
         return clamp(intensity / .8);
     }
+    function lightTintAt(x, y, z) {
+        const color = [0, 0, 0];
+        for (const light of lights()) {
+            const dx = light.pos[0] - x, dy = light.pos[1] - y, dz = light.pos[2] - z;
+            const attenuation = 1 / (1 + .06 * (dx * dx + dy * dy + dz * dz));
+            for (let i = 0; i < 3; i++) color[i] += light.col[i] * attenuation;
+        }
+        const maximum = Math.max(color[0], color[1], color[2]);
+        if (maximum <= 0) return [1, 1, 1];
+        return color.map(channel => 1 + .35 * (channel / maximum - 1));
+    }
 
     /* =================== KAMERA (M.look dari titik kamera ke titik bidik) =================== */
     const BL = .9;      // lama transisi antar shot (detik); shot bertanda cut:true = potong langsung
@@ -198,9 +209,11 @@ const Scene = (() => {
         const semiLight = lightAt(s.x, 1, s.z);
         const apexLight = lightAt(a.x, 1.5, a.z);
         const elsaLight = lightAt(e.x, 1, e.z);
-        callSemibot(gfx, mm(M.T(s.x, s.y, s.z), M.RY(s.yaw)), s.pose, t, { k: s.k, ph: s.ph, sq: s.sq, lean: s.lean, spin: s.spin, lit: semiLight });
+        const semiTint = lightTintAt(s.x, 1, s.z);
+        const elsaTint = lightTintAt(e.x, 1, e.z);
+        callSemibot(gfx, mm(M.T(s.x, s.y, s.z), M.RY(s.yaw)), s.pose, t, { k: s.k, ph: s.ph, sq: s.sq, lean: s.lean, spin: s.spin, lit: semiLight * .65, lightTint: semiTint });
         if (a.vis) callApex(gfx, mm(M.T(a.x, 0, a.z), M.RY(a.yaw), M.S(a.scale, a.scale, a.scale)), a.pose, t, { ph: a.ph, scale: a.scale, lit: apexLight });
-        callElsa(gfx, mm(M.T(e.x, 0, e.z), M.RY(e.yaw)), e.pose, t, { ph: e.ph, scale: e.scale, lit: elsaLight });
+        callElsa(gfx, mm(M.T(e.x, 0, e.z), M.RY(e.yaw)), e.pose, t, { ph: e.ph, scale: e.scale, lit: elsaLight * .65, lightTint: elsaTint });
     }
 
     /* =================== OVERLAY HTML + KONTROL =================== */

@@ -15,7 +15,7 @@
   const FS = `
     precision mediump float;
     varying vec3 vN, vW, vL;
-    uniform vec3 uColor, uEye; uniform float uMouth, uSceneLight;
+    uniform vec3 uColor, uEye, uSceneTint; uniform float uMouth, uSceneLight;
     void main(){
       vec3 N = normalize(vN), L = normalize(vec3(0.5, 1.0, 0.8));
       float inside = 0.0; // mode 5 (mangkuk dagu): sisi dalam = bagian dalam mulut
@@ -44,10 +44,10 @@
       }
       col = mix(col, col * vec3(0.64, 0.6, 0.56), dk);
       col = mix(col, mc, mk);
-      gl_FragColor = vec4(col * uSceneLight, 1.0);
+      gl_FragColor = vec4(col * uSceneLight * uSceneTint, 1.0);
     }`;
 
-  let prog, aPos, aNorm, uModel, uVP, uNM, uColor, uEye, uMouth, uSceneLight;
+  let prog, aPos, aNorm, uModel, uVP, uNM, uColor, uEye, uMouth, uSceneLight, uSceneTint;
   let ellipsoid, cone, coneFrustum, legTube, hindLegTube, tailTube, headMesh, chinBowl;
 
   function initElsaMeshes(_gl) {
@@ -59,6 +59,7 @@
     uNM = gl.getUniformLocation(prog, 'uNormalMat'); uColor = gl.getUniformLocation(prog, 'uColor');
     uEye = gl.getUniformLocation(prog, 'uEye'); uMouth = gl.getUniformLocation(prog, 'uMouth');
     uSceneLight = gl.getUniformLocation(prog, 'uSceneLight');
+    uSceneTint = gl.getUniformLocation(prog, 'uSceneTint');
 
     ellipsoid = createMesh(gl, Geo.ellipsoid());
     cone = createMesh(gl, Geo.cone());
@@ -168,6 +169,7 @@
     const scale = typeof o.scale === 'number' ? o.scale : 1;
     const sceneLight = typeof o.lit === 'number' ? o.lit : 1;
     gl.uniform1f(uSceneLight, sceneLight);
+    gl.uniform3fv(uSceneTint, o.lightTint || [1, 1, 1]);
     const isStep = (pose === 'step');
     renderElsaBody(root, ph, isStep ? 1 : 0, t, scale);
 
@@ -180,6 +182,7 @@
     initElsaMeshes(gl);
     gl.useProgram(prog);
     gl.uniform1f(uSceneLight, 1);
+    gl.uniform3fv(uSceneTint, [1, 1, 1]);
     gl.enableVertexAttribArray(aPos); gl.enableVertexAttribArray(aNorm);
     gl.enable(gl.DEPTH_TEST);
 

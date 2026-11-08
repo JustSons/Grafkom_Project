@@ -26,12 +26,12 @@ void main() {
 const FS = `
 precision mediump float;
 varying vec3 vN, vV;
-uniform vec3 uC;
+uniform vec3 uC, uSceneTint;
 uniform float uFlat, uSceneLight;
 
 void main() {
     if (uFlat > .5) {
-        gl_FragColor = vec4(uC * uSceneLight, 1.);
+        gl_FragColor = vec4(uC * uSceneLight * uSceneTint, 1.);
         return;
     }
 
@@ -41,7 +41,7 @@ void main() {
     vec3 l = normalize(vec3(.5, .8, .7)), h = normalize(l + v);
     float d = max(dot(n, l), 0.);
     float s = pow(max(dot(n, h), 0.), 50.) * .45;
-    gl_FragColor = vec4((uC * (.28 + .18 * (.5 + .5 * n.y) + .75 * d) + s) * uSceneLight, 1.);
+    gl_FragColor = vec4((uC * (.28 + .18 * (.5 + .5 * n.y) + .75 * d) + s) * uSceneLight * uSceneTint, 1.);
 }`;
 function sh(t, s) {
     const o = gl.createShader(t);
@@ -57,7 +57,7 @@ gl.linkProgram(pg);
 gl.useProgram(pg);
 
 const U = {};
-['uMV', 'uPr', 'uNM', 'uC', 'uFlat', 'uSceneLight'].forEach(n => {
+['uMV', 'uPr', 'uNM', 'uC', 'uFlat', 'uSceneLight', 'uSceneTint'].forEach(n => {
     U[n] = gl.getUniformLocation(pg, n);
 });
 const aP = gl.getAttribLocation(pg, 'aP'), aN = gl.getAttribLocation(pg, 'aN');
@@ -65,6 +65,7 @@ gl.enableVertexAttribArray(aP);
 gl.enableVertexAttribArray(aN);
 gl.enable(gl.DEPTH_TEST);
 gl.uniform1f(U.uSceneLight, 1);
+gl.uniform3fv(U.uSceneTint, [1, 1, 1]);
 
 /* ===== 2. Matriks (kolom-mayor) ===== */
 const M = {
@@ -125,7 +126,7 @@ const M = {
         m[5] = c;
         return m;
     },
-    RA(axis, a) { // rotasi mengelilingi sumbu sembarang (rumus Rodrigues)
+    RA(axis, a) { // axis = [x,y,z], a = sudut radian; membuat rotasi sumbu sembarang dengan Rodrigues.
         const l = Math.hypot(axis[0], axis[1], axis[2]);
         const x = axis[0] / l, y = axis[1] / l, z = axis[2] / l;
         const c = Math.cos(a), s = Math.sin(a), k = 1 - c, m = M.id();
@@ -316,21 +317,14 @@ for (let i = -5; i <= 5; i++) {
 let raT = 0; // sudut putar sumbu sembarang (terus bertambah saat state 'spin')
 let ang = 0, t = 0, state = 'idle', health = MAX_HP, hit = 0, TAU = Math.PI * 2;
 let sceneLight = 1;
+let sceneTint = [1, 1, 1];
 
+// Gambar model dari P (pose), body (warna RGB), dan externalRoot (matriks induk opsional).
 function drawBot(P, body, externalRoot) {
     gl.uniform1f(U.uSceneLight, sceneLight);
+    gl.uniform3fv(U.uSceneTint, sceneTint);
     const q = 1 / Math.sqrt(P.sy); // squash & stretch menjaga volume
     const seam = body.map(channel => channel * .32);
-    const localRoot = mm(
-        M.T(P.R * Math.sin(ang) + P.shx, P.bob, P.R * Math.cos(ang)),
-        M.RY(P.yaw),
-        M.S(q, P.sy, q),
-        M.T(0, .9, 0),
-        M.RA([1, 1, 0], P.ra), // putar mengelilingi sumbu miring (1,1,0)
-        M.RX(P.tx),
-        M.RZ(P.tz),
-        M.T(0, -.9, 0)
-    );
     const root = externalRoot
         ? mm(
             externalRoot,
@@ -342,7 +336,16 @@ function drawBot(P, body, externalRoot) {
             M.RZ(P.tz),
             M.T(0, -.9, 0)
         )
-        : localRoot;
+        : mm(
+            M.T(P.R * Math.sin(ang) + P.shx, P.bob, P.R * Math.cos(ang)),
+            M.RY(P.yaw),
+            M.S(q, P.sy, q),
+            M.T(0, .9, 0),
+            M.RA([1, 1, 0], P.ra),
+            M.RX(P.tx),
+            M.RZ(P.tz),
+            M.T(0, -.9, 0)
+        );
     for (const s of [-1, 1]) { // kaki: kerucut, pivot di pinggul
         const H = mm(root, M.T(s * .145, .6, 0), M.RX(s < 0 ? P.swL : P.swR));
         draw(mLeg, mm(H, M.T(0, -.30, 0), M.RX(Math.PI)), body);
@@ -405,6 +408,7 @@ function drawBot(P, body, externalRoot) {
     });
 }
 
+// API scene: gfx = renderer bersama, root = transformasi induk, pose = status, sceneTime = detik, o = parameter animasi/cahaya.
 function drawSemibot(gfx, root, pose, sceneTime, o = {}) {
     if (!gfx || gfx.gl !== gl || !gfx.getV || !gfx.getPr || !gfx.pg) {
         throw new TypeError('drawSemibot membutuhkan renderer Master Scene pada WebGL context yang sama.');
@@ -435,6 +439,7 @@ function drawSemibot(gfx, root, pose, sceneTime, o = {}) {
 
     t = sceneTime;
     sceneLight = o.lit === undefined ? 1 : o.lit;
+    sceneTint = o.lightTint || [1, 1, 1];
     V = gfx.getV();
     gl.useProgram(pg);
     gl.enableVertexAttribArray(aP);
@@ -449,6 +454,7 @@ function drawSemibot(gfx, root, pose, sceneTime, o = {}) {
 window.drawSemibot = drawSemibot;
 
 /* ===== 6. Animasi: target tiap state di-lerp agar halus ===== */
+// Hitung pose tujuan; st = status animasi, t = waktu dalam detik, y0 = yaw awal dalam radian.
 function target(st, t, y0) {
     const s = Math.sin, c = Math.cos;
     const P = {
