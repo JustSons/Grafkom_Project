@@ -359,6 +359,7 @@
        o.ph fase langkah (rad)  o.k amplitudo jalan 0..1  o.run langkah lebih besar  o.pred 0..1 mode monster
        o.roar / o.atk 0..1  o.lit kecerahan lorong 0..1 (opsional, meredupkan saat lampu padam)
      root = posisi + yaw + skala dari scene (menghadap +Z, lantai y = 0). Mengembalikan false bila belum bisa menggambar. */
+  const APEX_SCALE = 0.6; // ubah nilai ini untuk memperbesar atau memperkecil seluruh karakter
   const S0 = 0.365, GROUND = 1.49;   // model ±4.1 satuan -> tinggi 1.5 di adegan; telapak kaki model di y = -1.49
   window.drawApex = function (gfx, root, pose, t, o) {
     const _gl = window.gl || (gfx && gfx.gl);
@@ -372,7 +373,8 @@
     gl.uniformMatrix4fv(uVP, false, M4.mul(window.getPr(), window.getV()));
     const lit = o.lit;
     gl.uniform3fv(uTint, lit === undefined ? [1, 1, 1] : [0.78 * lit, 0.68 * lit, 0.54 * lit]);
-    renderApexBody(chain(root, S(S0, S0, S0), T(0, GROUND, 0)), {
+    const modelScale = S0 * APEX_SCALE;
+    renderApexBody(chain(root, S(modelScale, modelScale, modelScale), T(0, GROUND, 0)), {
       tau: o.ph || 0, wb, g: run ? 1.6 : 1, pred, roar: o.roar || 0, atk: o.atk || 0, lean: run ? 0.10 * wb : 0, life: 1, t
     });
     if (window.pg) gl.useProgram(window.pg);
@@ -442,7 +444,7 @@
       const eye = [dist * Math.sin(theta) * Math.cos(phi), dist * Math.sin(phi) + TARGET_Y, dist * Math.cos(theta) * Math.cos(phi)];
       gl.uniformMatrix4fv(uVP, false, M4.mul(M4.perspective(42 * PI / 180, canvas.width / canvas.height, 0.1, 100), M4.lookAt(eye, [0, TARGET_Y, 0], [0, 1, 0])));
       gl.uniform3fv(uTint, [1, 1, 1]);
-      const info = renderApexBody(M4.identity(), { tau: walkTime, wb: walkBlend, g: 1, pred: predAmt, roar: 0, atk: 0, lean: 0, life: 0, t: now * 0.001 });
+      const info = renderApexBody(chain(M4.identity(), S(APEX_SCALE, APEX_SCALE, APEX_SCALE)), { tau: walkTime, wb: walkBlend, g: 1, pred: predAmt, roar: 0, atk: 0, lean: 0, life: 0, t: now * 0.001 });
 
       const el = document.getElementById('live-scale-val');
       if (el) el.textContent = info.footSquash < 0.95
