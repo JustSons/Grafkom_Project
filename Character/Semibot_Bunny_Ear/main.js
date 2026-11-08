@@ -5,6 +5,7 @@
 // Pilihan bentuk kubah kepala: 'rounded', 'paraboloid', atau 'ellipsoid'.
 const DOME_TYPE = 'rounded';
 const MAX_HP = 10;
+const BODY_COLOR = [74 / 255, 156 / 255, 203 / 255];
 
 /* ===== 1. WebGL & shader ===== */
 const canvas = document.getElementById('mycanvas');
@@ -306,7 +307,6 @@ function lines(pts, col) {
     gl.vertexAttribPointer(aN, 3, gl.FLOAT, false, 24, 12);
     gl.drawArrays(gl.LINES, 0, pts.length);
 }
-const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
 const grid = [];
 for (let i = -5; i <= 5; i++) {
     grid.push([i, 0, -5], [i, 0, 5], [-5, 0, i], [5, 0, i]);
@@ -437,7 +437,7 @@ function drawSemibot(gfx, root, pose, sceneTime, o = {}) {
     gl.enableVertexAttribArray(aN);
     gl.uniformMatrix4fv(U.uPr, false, gfx.getPr());
     try {
-        drawBot(P, rgb('#e02020'), root);
+        drawBot(P, BODY_COLOR, root);
     } finally {
         gl.useProgram(gfx.pg);
     }
@@ -518,8 +518,7 @@ canvas.addEventListener('wheel', e => {
 
 const ui = document.createElement('div');
 ui.style.cssText = 'position:fixed;left:12px;top:12px;display:flex;flex-direction:column;gap:8px;font:14px system-ui,sans-serif;color:#e8eaed';
-ui.innerHTML = '<b>Semibot + Bunny Ears</b><div id="bt" style="display:flex;flex-wrap:wrap;gap:6px"></div>' +
-    '<label>Warna <input type="color" id="col" value="#e02020"></label><div id="hp"></div>';
+ui.innerHTML = '<b>Semibot + Bunny Ears</b><div id="bt" style="display:flex;flex-wrap:wrap;gap:6px"></div><div id="hp"></div>';
 document.body.appendChild(ui);
 const stBtns = [];
 function btn(label, fn, isState) {
@@ -551,7 +550,7 @@ btn('Heal (+1 HP)', () => {
 btn('Lihat belakang', () => {
     cyT = Math.abs(cyT % TAU) > 2 ? -.4 : Math.PI;
 });
-const colEl = document.getElementById('col'), hpEl = document.getElementById('hp');
+const hpEl = document.getElementById('hp');
 function showHP() {
     hpEl.textContent = 'Health ' + health + ' / ' + MAX_HP;
 }
@@ -595,7 +594,7 @@ function frame(now) {
     V = mm(M.T(0, 0, -dist), M.RX(cp), M.RY(cy), M.T(0, -1.3, 0));
     gl.uniformMatrix4fv(U.uPr, false, Pr);
     lines(grid, [.16, .19, .24]);
-    drawBot(D, rgb(colEl.value));
+    drawBot(D, BODY_COLOR);
     requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
