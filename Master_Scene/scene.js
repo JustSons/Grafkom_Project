@@ -118,7 +118,8 @@ const Scene = (() => {
             const x0 = weaveX(Z_END), u = clamp((t - 46.6) / 2.8), e = u * u * (3 - 2 * u);
             S.x = lerp(x0, LAND[0], u); S.z = lerp(Z_END, LAND[1], u);
             S.y = 8 * u * (1 - u);                                                           // pusat badan: y = 1 + 8u(1-u), puncak 3.0
-            S.pose = 'tumble'; S.k = sstep(46.6, 46.8, t) * (1 - sstep(49.0, 49.8, t));
+            S.pose = t < 49.4 ? 'tumble' : "idle";
+            S.k = sstep(46.6, 46.8, t) * (1 - sstep(49.0, 49.8, t));
             S.spin = 2 * PI2 * e;                                                            // 2 putaran penuh -> mendarat tegak
             S.sq = .9 * bump(49.35, 50.2, t);
             S.yaw = angLerp(0, Math.atan2(E_STAND[0] - LAND[0], E_STAND[1] - LAND[1]), sstep(49.9, 51.5, t));
