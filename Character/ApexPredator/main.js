@@ -320,7 +320,7 @@
        o.roar / o.atk 0..1  o.lit kecerahan lorong 0..1 (opsional, meredupkan saat lampu padam)
      root = posisi + yaw + skala dari scene (menghadap +Z, lantai y = 0). Mengembalikan false bila belum bisa menggambar. */
   const APEX_SCALE = 0.6; // ubah nilai ini untuk memperbesar atau memperkecil seluruh karakter
-  const S0 = 0.365, GROUND = 1.49;   // model ±4.1 satuan -> tinggi 1.5 di adegan; telapak kaki model di y = -1.49
+  const S0 = 0.365, GROUND = 1.59;   // sedikit clearance agar kaki tidak menembus lantai saat berlari
   window.drawApex = function (gfx, root, pose, t, o) {
     const _gl = window.gl || (gfx && gfx.gl);
     if (!_gl || !window.getV || !window.getPr) return false;
