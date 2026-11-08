@@ -56,12 +56,13 @@ var LIBS = {
     scaleZ: function(m,t){m[10]*=t;},
 
     multiply: function (m1, m2) {
-        var rm=this.get_I4(),N=4;
-        for(var i=0;i<N;i++)
-            for(var j=0;j<N;j++){
-                rm[i*N+j]=0;
-                for(var k=0;k<N;k++)
-                    rm[i*N+j]+=m1[i*N+k]*m2[k*N+j];
+        var rm = new Float32Array(16);
+        for (var c = 0; c < 4; c++)
+            for (var r = 0; r < 4; r++) {
+                var sum = 0;
+                for (var k = 0; k < 4; k++)
+                    sum += m1[k * 4 + r] * m2[c * 4 + k];
+                rm[c * 4 + r] = sum;
             }
         return rm;
     },
@@ -189,5 +190,80 @@ var LIBS = {
         ];
     },
 
-    copy: function(m){ return m.slice(); }
+    copy: function(m){ return m.slice(); },
+
+    identity: function() {
+        return new Float32Array(LIBS.get_I4());
+    },
+
+    mul: function(a, b) {
+        return LIBS.multiply(a, b);
+    },
+
+    chain: function() {
+        var matrices = Array.prototype.slice.call(arguments);
+        return matrices.reduce(function(result, matrix) {
+            return LIBS.multiply(result, matrix);
+        });
+    },
+
+    translation: function(x, y, z) {
+        return new Float32Array(LIBS.makeTranslation(x, y, z));
+    },
+
+    scaling: function(x, y, z) {
+        return new Float32Array(LIBS.makeScale(x, y, z));
+    },
+
+    rotX: function(angle) {
+        return new Float32Array(LIBS.makeRotationX(angle));
+    },
+
+    rotY: function(angle) {
+        return new Float32Array(LIBS.makeRotationY(angle));
+    },
+
+    rotZ: function(angle) {
+        return new Float32Array(LIBS.makeRotationZ(angle));
+    },
+
+    pivot: function(px, py, pz, rx, ry, rz, sx, sy, sz, tx, ty, tz) {
+        return new Float32Array(LIBS.makePivotTransform(px, py, pz, rx, ry, rz, sx, sy, sz, tx, ty, tz));
+    },
+
+    pivotAxis: function(px, py, pz, ax, ay, az, angle, sx, sy, sz, tx, ty, tz) {
+        return new Float32Array(LIBS.makePivotTransformAxis(px, py, pz, ax, ay, az, angle, sx, sy, sz, tx, ty, tz));
+    },
+
+    perspective: function(fov, aspect, near, far) {
+        var f = 1 / Math.tan(fov / 2);
+        var matrix = new Float32Array(16);
+        matrix[0] = f / aspect;
+        matrix[5] = f;
+        matrix[10] = (far + near) / (near - far);
+        matrix[11] = -1;
+        matrix[14] = 2 * far * near / (near - far);
+        return matrix;
+    },
+
+    lookAt: function(eye, target, up) {
+        var normalize = function(v) {
+            var length = Math.hypot(v[0], v[1], v[2]) || 1;
+            return [v[0] / length, v[1] / length, v[2] / length];
+        };
+        var cross = function(a, b) {
+            return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+        };
+        var forward = normalize([target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]]);
+        var side = normalize(cross(forward, up));
+        var vertical = cross(side, forward);
+        var matrix = LIBS.identity();
+        matrix[0] = side[0]; matrix[4] = side[1]; matrix[8] = side[2];
+        matrix[1] = vertical[0]; matrix[5] = vertical[1]; matrix[9] = vertical[2];
+        matrix[2] = -forward[0]; matrix[6] = -forward[1]; matrix[10] = -forward[2];
+        matrix[12] = -(side[0] * eye[0] + side[1] * eye[1] + side[2] * eye[2]);
+        matrix[13] = -(vertical[0] * eye[0] + vertical[1] * eye[1] + vertical[2] * eye[2]);
+        matrix[14] = forward[0] * eye[0] + forward[1] * eye[1] + forward[2] * eye[2];
+        return matrix;
+    }
 };

@@ -1,51 +1,11 @@
 /* main.js - Karakter Apex Predator (R.E.P.O.) dengan WebGL: ellipsoid + paraboloid + cone + cylinder + kurva Bezier 3D
-   Gaya kode SAMA dengan Elsa: mesh dibuat sekali, lalu digambar lewat draw(mesh, M, color) dengan chain(...) transformasi.
-   Bentuk model (generator geometri, ukuran, posisi, pose, animasi, transisi mode monster) tidak diubah dari versi SceneNode.
-   Tidak butuh LIBS / SceneNode lagi. Memakai Mat4 milik Elsa bila ada (kalau tidak ada, dipakai versi kecil di file ini). */
+   Mesh dibuat sekali, lalu digambar lewat draw(mesh, M, color) dengan chain(...) transformasi.
+   Bentuk model (generator geometri, ukuran, pose, animasi, transisi mode monster) memakai helper dari libs.js. */
 (function () {
   'use strict';
   const PI = Math.PI;
-  let gl = null, M4 = null, T, S, rotX, rotY, rotZ, chain;
-
-  /* ---- Mat4: pakai milik proyek bila sudah dimuat, kalau belum pakai cadangan (kolom-mayor, sama konvensinya) ---- */
-  function makeMat4() {
-    const id = () => new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-    const mul = (a, b) => { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s } return o };
-    const nz = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l] };
-    const cr = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-    return {
-      identity: id, mul, chain: (...m) => m.reduce(mul),
-      translation: (x, y, z) => { const m = id(); m[12] = x; m[13] = y; m[14] = z; return m },
-      scaling: (x, y, z) => { const m = id(); m[0] = x; m[5] = y; m[10] = z; return m },
-      rotX: a => { const m = id(), c = Math.cos(a), s = Math.sin(a); m[5] = c; m[6] = s; m[9] = -s; m[10] = c; return m },
-      rotY: a => { const m = id(), c = Math.cos(a), s = Math.sin(a); m[0] = c; m[2] = -s; m[8] = s; m[10] = c; return m },
-      rotZ: a => { const m = id(), c = Math.cos(a), s = Math.sin(a); m[0] = c; m[1] = s; m[4] = -s; m[5] = c; return m },
-      perspective: (f, a, n, r) => { const t = 1 / Math.tan(f / 2), m = new Float32Array(16); m[0] = t / a; m[5] = t; m[10] = (r + n) / (n - r); m[11] = -1; m[14] = 2 * r * n / (n - r); return m },
-      lookAt: (e, c, up) => {
-        const f = nz([c[0] - e[0], c[1] - e[1], c[2] - e[2]]), s = nz(cr(f, up)), u = cr(s, f), m = id();
-        m[0] = s[0]; m[4] = s[1]; m[8] = s[2]; m[1] = u[0]; m[5] = u[1]; m[9] = u[2]; m[2] = -f[0]; m[6] = -f[1]; m[10] = -f[2];
-        m[12] = -(s[0] * e[0] + s[1] * e[1] + s[2] * e[2]); m[13] = -(u[0] * e[0] + u[1] * e[1] + u[2] * e[2]); m[14] = f[0] * e[0] + f[1] * e[1] + f[2] * e[2];
-        return m;
-      }
-    };
-  }
-  function useMat4() {
-    if (M4) return;
-    M4 = typeof Mat4 !== 'undefined' ? Mat4 : makeMat4();
-    ({ translation: T, scaling: S, rotX, rotY, rotZ, chain } = M4);
-  }
-  // rotasi mengelilingi sumbu sembarang (Rodrigues; sumbu dinormalisasi, radian, kolom-mayor)
-  const rotAxis = (x, y, z, a) => {
-    const l = Math.hypot(x, y, z) || 1; x /= l; y /= l; z /= l;
-    const c = Math.cos(a), s = Math.sin(a), k = 1 - c;
-    return new Float32Array([c + x * x * k, y * x * k + z * s, z * x * k - y * s, 0, x * y * k - z * s, c + y * y * k, z * y * k + x * s, 0,
-                             x * z * k + y * s, y * z * k - x * s, c + z * z * k, 0, 0, 0, 0, 1]);
-  };
-  // pivot transform (sama dengan LIBS.makePivotTransform / ...Axis): putar & skala di titik engsel (px,py,pz), lalu geser (tx,ty,tz)
-  const pivot = (px, py, pz, rx, ry, rz, sx, sy, sz, tx, ty, tz) =>
-    chain(T(tx, ty, tz), T(px, py, pz), rotZ(rz), rotY(ry), rotX(rx), S(sx, sy, sz), T(-px, -py, -pz));
-  const pivotAxis = (px, py, pz, ax, ay, az, ang, sx, sy, sz, tx, ty, tz) =>
-    chain(T(tx, ty, tz), T(px, py, pz), rotAxis(ax, ay, az, ang), S(sx, sy, sz), T(-px, -py, -pz));
+  let gl = null;
+  const { identity, mul, perspective, lookAt, translation: T, scaling: S, rotX, rotY, rotZ, chain, pivot, pivotAxis } = LIBS;
 
   /* ================= GEOMETRI (rumus asli): {positions, normals, indices} datar ================= */
   const unitN = n => {
@@ -251,7 +211,7 @@
   let prog, aPos, aNorm, uModel, uVP, uColor, uTint, G;
   function initApex(_gl) {
     if (prog) return;
-    gl = _gl; useMat4();
+    gl = _gl;
     prog = makeProgram();
     aPos = gl.getAttribLocation(prog, 'aPos'); aNorm = gl.getAttribLocation(prog, 'aNorm');
     uModel = gl.getUniformLocation(prog, 'uModel'); uVP = gl.getUniformLocation(prog, 'uViewProj');
@@ -370,7 +330,7 @@
     const wb = o.k !== undefined ? o.k : (pose === 'run' ? 1 : 0), run = !!o.run || pose === 'run';
     gl.useProgram(prog);
     gl.enableVertexAttribArray(aPos); gl.enableVertexAttribArray(aNorm);
-    gl.uniformMatrix4fv(uVP, false, M4.mul(window.getPr(), window.getV()));
+    gl.uniformMatrix4fv(uVP, false, mul(window.getPr(), window.getV()));
     const lit = o.lit;
     gl.uniform3fv(uTint, lit === undefined ? [1, 1, 1] : [0.78 * lit, 0.68 * lit, 0.54 * lit]);
     const modelScale = S0 * APEX_SCALE;
@@ -442,9 +402,9 @@
 
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       const eye = [dist * Math.sin(theta) * Math.cos(phi), dist * Math.sin(phi) + TARGET_Y, dist * Math.cos(theta) * Math.cos(phi)];
-      gl.uniformMatrix4fv(uVP, false, M4.mul(M4.perspective(42 * PI / 180, canvas.width / canvas.height, 0.1, 100), M4.lookAt(eye, [0, TARGET_Y, 0], [0, 1, 0])));
+      gl.uniformMatrix4fv(uVP, false, mul(perspective(42 * PI / 180, canvas.width / canvas.height, 0.1, 100), lookAt(eye, [0, TARGET_Y, 0], [0, 1, 0])));
       gl.uniform3fv(uTint, [1, 1, 1]);
-      const info = renderApexBody(chain(M4.identity(), S(APEX_SCALE, APEX_SCALE, APEX_SCALE)), { tau: walkTime, wb: walkBlend, g: 1, pred: predAmt, roar: 0, atk: 0, lean: 0, life: 0, t: now * 0.001 });
+      const info = renderApexBody(chain(identity(), S(APEX_SCALE, APEX_SCALE, APEX_SCALE)), { tau: walkTime, wb: walkBlend, g: 1, pred: predAmt, roar: 0, atk: 0, lean: 0, life: 0, t: now * 0.001 });
 
       const el = document.getElementById('live-scale-val');
       if (el) el.textContent = info.footSquash < 0.95
