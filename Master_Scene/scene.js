@@ -187,7 +187,7 @@ const Scene = (() => {
     }
 
     /* =================== OVERLAY HTML + KONTROL =================== */
-    const CREDITS = [['Semibot', '[nama]'], ['Apex', '[nama]'], ['Elsa', '[nama]'], ['Environment, kamera & adegan', '[nama]']];
+    const CREDITS = [['Semibot', 'Ricson Witamso'], ['Apex', 'Jason Maximilian Ungranesia'], ['Elsa', 'Davin Edbert Lie']];
     const el = {};
     const on = () => typeof mode === 'undefined' || mode === 'scene';
     function buildUI() {
