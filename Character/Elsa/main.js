@@ -25,16 +25,17 @@
       float s = pow(max(dot(N, H), 0.0), 24.0) * 0.15;
       float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.08;
       vec3 col = uColor * (0.38 + 0.78 * d) + vec3(s + rim);
+      if (uMouth > 2.5 && uMouth < 4.5) col = uColor * (0.45 + 0.8 * d) + vec3(s + rim);
       col *= mix(vec3(1.0), vec3(0.3, 0.22, 0.18), inside);
       // uMouth=1: kepala (bagian bawah-depan jadi bagian dalam mulut), uMouth=2: moncong (langit-langit mulut)
       float mk = 0.0, dk = 0.0; vec3 mc = vec3(0.03, 0.015, 0.015) * (0.5 + d);
       if (uMouth > 3.5 && uMouth < 4.5) { // bagian dalam telinga: lanjutan pink di bagian bawah ujung
         float rr = max(1.0 - vL.y, 0.02); mk = smoothstep(0.25, 0.4, vL.z / rr) * (1.0 - smoothstep(0.62, 0.72, abs(vL.x) / rr)) * (1.0 - smoothstep(0.78, 0.9, vL.y));
-        mc = vec3(0.80, 0.46, 0.43) * (0.45 + 0.7 * d); dk = 1.0 - smoothstep(0.5, 0.8, vL.y);
+        mc = vec3(0.80, 0.46, 0.43) * (0.45 + 0.7 * d);
       }
       else if (uMouth > 2.5 && uMouth < 3.5) { // bagian dalam telinga (merah muda) dilukis di permukaan pangkal telinga
         float rr = 1.0 - 0.2 * vL.y; mk = smoothstep(0.25, 0.4, vL.z / rr) * (1.0 - smoothstep(0.62, 0.72, abs(vL.x) / rr));
-        mc = vec3(0.80, 0.46, 0.43) * (0.45 + 0.7 * d); dk = 1.0;
+        mc = vec3(0.80, 0.46, 0.43) * (0.45 + 0.7 * d);
       }
       else if (uMouth > 0.5 && uMouth < 1.5) { // kepala: bagian dalam kantong mulut (atap hitam, lantai cokelat muda) mengikuti kedalaman
         float r = length(vL), im = 1.0 - smoothstep(0.86, 0.985, r);
@@ -85,12 +86,14 @@
 
   const { translation: T, scaling: S, rotX, rotY, rotZ, chain } = Mat4;
   const FUR = [1, 1, 0.999], FUR_D = [0.56, 0.45, 0.35], DARK = [0.08, 0.06, 0.05];
-  const TONGUE = [0.93, 0.5, 0.52], SHADOW = [0.12, 0.12, 0.12];
+  const TONGUE = [0.93, 0.5, 0.52];
+
+  // Skala seluruh badan Elsa (1 = ukuran semula). 0.8 = 20% lebih kecil; kaki tetap menapak karena skala dari titik tanah (root)
+  const ELSA_SCALE = 0.5;
 
   function renderElsaBody(root, w, amp, t) {
-    draw(ellipsoid, chain(root, T(0, 0.005, -0.1), S(0.75, 0.005, 1.15)), SHADOW);
     const bob = 0.025 * amp * Math.sin(2 * w);
-    const rootElsa = chain(root, T(0, bob, 0));
+    const rootElsa = chain(root, S(ELSA_SCALE, ELSA_SCALE, ELSA_SCALE), T(0, bob, 0));   // skala dulu, lalu gerak naik-turun (ikut mengecil)
 
     draw(ellipsoid, chain(rootElsa, T(0, 0.85, -0.14), S(0.44, 0.4, 0.6)), FUR);
     draw(ellipsoid, chain(rootElsa, T(0, 1, 0.25), S(0.44, 0.5, 0.45)), FUR);
@@ -108,19 +111,20 @@
     const P = [0, 1.2, 0.4];
     const head = chain(rootElsa, T(0, 0.3, -0.27), T(...P), rotX(0.05 * amp * Math.sin(2 * w + 1)), rotY(0.08 * Math.sin(t * 0.9)), T(-P[0], -P[1], -P[2]));
 
-    draw(headMesh, chain(head, T(0, 1.62-0.3, 0.63), S(0.5, 0.48, 0.43)), FUR, 1);
-    draw(ellipsoid, chain(head, T(0, 1.7-0.3, 1.18), S(0.1, 0.07, 0.075)), DARK);
-    draw(ellipsoid, chain(head, T(0.17, 1.78-0.3, 1.0), S(0.06, 0.062, 0.05)), DARK);
-    draw(ellipsoid, chain(head, T(-0.17, 1.78-0.3, 1.0), S(0.06, 0.062, 0.05)), DARK);
-    draw(chinBowl, chain(head, T(0, 1.25, 0.79), rotX(0.4), S(0.3, 0.42, 0.32)), FUR, 5);
-    draw(ellipsoid, chain(head, T(0, 1.2, 0.9 + 0.02 * Math.sin(5 * t)), rotX(0.35), S(0.1, 0.03, 0.26)), TONGUE);
+    draw(headMesh, chain(head, T(0, 1.62-0.3, 0.63), S(0.5, 0.48, 0.43)), FUR, 1); // kepala (bagian bawah-depan jadi bagian dalam mulut)
+    draw(ellipsoid, chain(head, T(0, 1.7-0.3, 1.18), S(0.1, 0.07, 0.075)), DARK); // moncong (bagian atas kepala)
+    draw(ellipsoid, chain(head, T(0.17, 1.78-0.3, 1.0), S(0.06, 0.062, 0.05)), DARK); // mata
+    draw(ellipsoid, chain(head, T(-0.17, 1.78-0.3, 1.0), S(0.06, 0.062, 0.05)), DARK); // mata
+    draw(chinBowl, chain(head, T(0, 1.25, 0.79), rotX(0.4), S(0.3, 0.42, 0.32)), FUR, 5); //mangkuk dagu (bagian dalam mulut)
+    draw(ellipsoid, chain(head, T(0, 1.23, 0.79), rotX(0.4), S(0.295, 0.025, 0.311)), DARK); //penutup mulut (bagian bawah-depan kepala) agar tidak terlihat dari luar
+    draw(ellipsoid, chain(head, T(0, 1.2, 0.9 + 0.02 * Math.sin(5 * t)), rotX(0.35), S(0.1, 0.03, 0.26)), TONGUE); // lidah (bagian dalam mulut)
 
     const twitch = 0.06 * Math.sin(3 * t);
     [1, -1].forEach(sx => {
       const base = chain(head, T(0.21 * sx, 1.88-0.3, 0.56), rotZ(-sx * (0.26 + twitch)));
       const tip = chain(base, T(0, 0.2, 0));
-      draw(coneFrustum, chain(base, S(0.17, 0.2, 0.13)), FUR, 3);
-      draw(cone, chain(tip, S(0.136, 0.28, 0.104)), FUR, 4);
+      draw(coneFrustum, chain(base, S(0.17, 0.2, 0.112)), FUR, 3); // telinga putih dengan bagian dalam merah muda
+      draw(cone, chain(tip, S(0.136, 0.28, 0.09)), FUR, 4); // lanjutkan warna merah muda ke ujung telinga
     });
   }
 
