@@ -26,11 +26,11 @@ const FS = `
 precision mediump float;
 varying vec3 vN, vV;
 uniform vec3 uC;
-uniform float uFlat;
+uniform float uFlat, uSceneLight;
 
 void main() {
     if (uFlat > .5) {
-        gl_FragColor = vec4(uC, 1.);
+        gl_FragColor = vec4(uC * uSceneLight, 1.);
         return;
     }
 
@@ -40,7 +40,7 @@ void main() {
     vec3 l = normalize(vec3(.5, .8, .7)), h = normalize(l + v);
     float d = max(dot(n, l), 0.);
     float s = pow(max(dot(n, h), 0.), 50.) * .45;
-    gl_FragColor = vec4(uC * (.28 + .18 * (.5 + .5 * n.y) + .75 * d) + s, 1.);
+    gl_FragColor = vec4((uC * (.28 + .18 * (.5 + .5 * n.y) + .75 * d) + s) * uSceneLight, 1.);
 }`;
 function sh(t, s) {
     const o = gl.createShader(t);
@@ -56,13 +56,14 @@ gl.linkProgram(pg);
 gl.useProgram(pg);
 
 const U = {};
-['uMV', 'uPr', 'uNM', 'uC', 'uFlat'].forEach(n => {
+['uMV', 'uPr', 'uNM', 'uC', 'uFlat', 'uSceneLight'].forEach(n => {
     U[n] = gl.getUniformLocation(pg, n);
 });
 const aP = gl.getAttribLocation(pg, 'aP'), aN = gl.getAttribLocation(pg, 'aN');
 gl.enableVertexAttribArray(aP);
 gl.enableVertexAttribArray(aN);
 gl.enable(gl.DEPTH_TEST);
+gl.uniform1f(U.uSceneLight, 1);
 
 /* ===== 2. Matriks (kolom-mayor) ===== */
 const M = {
@@ -314,8 +315,10 @@ for (let i = -5; i <= 5; i++) {
 
 let raT = 0; // sudut putar sumbu sembarang (terus bertambah saat state 'spin')
 let ang = 0, t = 0, state = 'idle', health = MAX_HP, hit = 0, TAU = Math.PI * 2;
+let sceneLight = 1;
 
 function drawBot(P, body, externalRoot) {
+    gl.uniform1f(U.uSceneLight, sceneLight);
     const q = 1 / Math.sqrt(P.sy); // squash & stretch menjaga volume
     const seam = body.map(channel => channel * .32);
     const localRoot = mm(
@@ -431,6 +434,7 @@ function drawSemibot(gfx, root, pose, sceneTime, o = {}) {
     }
 
     t = sceneTime;
+    sceneLight = o.lit === undefined ? 1 : o.lit;
     V = gfx.getV();
     gl.useProgram(pg);
     gl.enableVertexAttribArray(aP);

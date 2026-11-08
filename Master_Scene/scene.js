@@ -159,6 +159,16 @@ const Scene = (() => {
     }
     const lights = () => { const k = lightK(t); return Environment.getLights(t).map(l => ({ pos: l.pos, col: l.col.map(c => c * k) })); };
     const ambK = () => lerp(.22, 1, clamp(lightK(t) * 1.25));
+    function lightAt(x, y, z) {
+        let intensity = 0;
+        for (const light of lights()) {
+            const dx = light.pos[0] - x, dy = light.pos[1] - y, dz = light.pos[2] - z;
+            const distanceSq = dx * dx + dy * dy + dz * dz;
+            const luminance = .2126 * light.col[0] + .7152 * light.col[1] + .0722 * light.col[2];
+            intensity += luminance / (1 + .06 * distanceSq);
+        }
+        return clamp(intensity / .8);
+    }
 
     /* =================== KAMERA (M.look dari titik kamera ke titik bidik) =================== */
     const BL = .9;      // lama transisi antar shot (detik); shot bertanda cut:true = potong langsung
@@ -185,9 +195,12 @@ const Scene = (() => {
     /* =================== GAMBAR =================== */
     function draw(gfx) {
         const { s, a, e } = cur;
-        callSemibot(gfx, mm(M.T(s.x, s.y, s.z), M.RY(s.yaw)), s.pose, t, { k: s.k, ph: s.ph, sq: s.sq, lean: s.lean, spin: s.spin });
-        if (a.vis) callApex(gfx, mm(M.T(a.x, 0, a.z), M.RY(a.yaw), M.S(a.scale, a.scale, a.scale)), a.pose, t, { ph: a.ph, scale: a.scale });
-        callElsa(gfx, mm(M.T(e.x, 0, e.z), M.RY(e.yaw)), e.pose, t, { ph: e.ph, scale: e.scale });
+        const semiLight = lightAt(s.x, 1, s.z);
+        const apexLight = lightAt(a.x, 1.5, a.z);
+        const elsaLight = lightAt(e.x, 1, e.z);
+        callSemibot(gfx, mm(M.T(s.x, s.y, s.z), M.RY(s.yaw)), s.pose, t, { k: s.k, ph: s.ph, sq: s.sq, lean: s.lean, spin: s.spin, lit: semiLight });
+        if (a.vis) callApex(gfx, mm(M.T(a.x, 0, a.z), M.RY(a.yaw), M.S(a.scale, a.scale, a.scale)), a.pose, t, { ph: a.ph, scale: a.scale, lit: apexLight });
+        callElsa(gfx, mm(M.T(e.x, 0, e.z), M.RY(e.yaw)), e.pose, t, { ph: e.ph, scale: e.scale, lit: elsaLight });
     }
 
     /* =================== OVERLAY HTML + KONTROL =================== */
