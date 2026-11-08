@@ -141,8 +141,11 @@ const Scene = (() => {
 
     function elsaState(t) {
         const k = sstep(43, 44.8, t), x = lerp(E_HIDE[0], E_STAND[0], k), z = lerp(E_HIDE[1], E_STAND[1], k);
+        const stopped = k >= 1;
+        const scale = stopped && typeof shrinkElsa === 'function' ? shrinkElsa(t - 44.8) : 1;
         return { x, z, pose: k <= 0 ? 'hide' : (k < 1 ? 'step' : 'stand'), ph: k * PI2 * 1.5,
-                 yaw: angLerp(Math.PI, Math.atan2(LAND[0] - x, LAND[1] - z), sstep(49.9, 51.6, t)) };   // menoleh ke Semibot
+                 yaw: angLerp(Math.PI, Math.atan2(LAND[0] - x, LAND[1] - z), sstep(49.9, 51.6, t)),
+                 scale };   // Elsa mengecil perlahan setelah berhenti bergerak
     }
 
     /* =================== LAMPU ===================
@@ -184,7 +187,7 @@ const Scene = (() => {
         const { s, a, e } = cur;
         callSemibot(gfx, mm(M.T(s.x, s.y, s.z), M.RY(s.yaw)), s.pose, t, { k: s.k, ph: s.ph, sq: s.sq, lean: s.lean, spin: s.spin });
         if (a.vis) callApex(gfx, mm(M.T(a.x, 0, a.z), M.RY(a.yaw), M.S(a.scale, a.scale, a.scale)), a.pose, t, { ph: a.ph, scale: a.scale });
-        callElsa(gfx, mm(M.T(e.x, 0, e.z), M.RY(e.yaw)), e.pose, t, { ph: e.ph });
+        callElsa(gfx, mm(M.T(e.x, 0, e.z), M.RY(e.yaw)), e.pose, t, { ph: e.ph, scale: e.scale });
     }
 
     /* =================== OVERLAY HTML + KONTROL =================== */

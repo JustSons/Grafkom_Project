@@ -155,7 +155,7 @@ const Geo = {
   },
 
   // OBJEK 1c: kepala dipahat dari SATU ellipsoid satuan: (1) moncong menonjol ke depan, (2) kantong mulut cekung halus
-  // berlengkung senyum, (3) dagu berupa dinding vertikal rata di bawah mulut. Semuanya satu permukaan, tanpa sambungan.
+  // berlengkung senyum. Semuanya satu permukaan, tanpa sambungan.
   sculptedHead(stacks = 150, slices = 220, o = {}) {
     const mo = Object.assign({ m: [0, -0.77, 0.866], a: 0.7, b: 0.45, depth: 0.9, smile: 0.3, pw: 2.9, soft: 0.3 }, o.mouth || {});
     const sn = Object.assign({ y0: 0.02, a: 0.65, b: 0.3, push: 0.34, droop: 0.05 }, o.snout || {});
@@ -263,7 +263,7 @@ const Geo = {
   },
 
   // OBJEK 3: Tabung mengikuti KURVA Bezier kubik (dipakai untuk ekor & kaki)
-  bezierTube(P, radiusFn, segs = 24, sides = 16) {
+  bezierTube(P, radiusFn, segs = 24, sides = 16, capEnd = false) {
     const bez = t => {
       const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
       return [0, 1, 2].map(k => a * P[0][k] + b * P[1][k] + c * P[2][k] + d * P[3][k]);
@@ -290,6 +290,13 @@ const Geo = {
         const a = i * (sides + 1) + j, b = a + sides + 1;
         indices.push(a, b, a + 1, b, b + 1, a + 1);
       }
+    if (capEnd) {
+      const tip = bez(1), tipIndex = positions.length / 3, tipNormal = Vec3.normalize(der(1));
+      positions.push(...tip);
+      normals.push(...tipNormal);
+      const ring = segs * (sides + 1);
+      for (let j = 0; j < sides; j++) indices.push(tipIndex, ring + j, ring + j + 1);
+    }
     return { positions, normals, indices };
   }
 };
