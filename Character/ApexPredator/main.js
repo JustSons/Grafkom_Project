@@ -1,1866 +1,456 @@
-/**
- * main.js - Apex Predator (R.E.P.O.) WebGL Model & Viewer
- * 
- * Menggabungkan seluruh komponen model karakter:
- * 1. Generator Geometri (Quadric Objects & Kurva 3D Bezier)
- * 2. Scene Graph (SceneNode untuk hierarki transformasi)
- * 3. Definisi Model Apex Predator (R.E.P.O.)
- * 4. WebGL Pipeline, Orbit Camera, dan Interaksi
- *
- * Kontrol:
- *   - Mouse drag: Orbit kamera
- *   - Scroll: Zoom in / out
- *   - Space: Buka paruh & toggle taring (fangs)
- */
-
-// =========================================================================
-
-// 1. GEOMETRY GENERATORS (QUADRICS & BEZIER 3D CURVES)
-
-// =========================================================================
-
-/**
- * geometry.js
- * Kumpulan fungsi generator geometry untuk model Apex Predator (R.E.P.O.)
- * Setiap fungsi mengembalikan { vertices: Float32Array, indices: Uint16Array }
- * Format vertex: [x, y, z, r, g, b] per vertex (stride = 6 floats)
- * 
- * Dilengkapi kalkulasi normal analitik untuk directional shading halus,
- * menghasilkan efek 3D bervolume yang realistis dan mendalam.
- */
-
-// ─────────────────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────────────────
-
-/**
- * Buat vertex buffer terinterleave [x,y,z,r,g,b, ...]
- * dengan directional shading halus berdasarkan vektor normal.
- * @param {number[][]} positions Array of [x,y,z]
- * @param {number[]}   color     [r,g,b] (0..1)
- * @param {number[][]} [normals] Array of [nx,ny,nz] (opsional)
- */
-function buildVertices(positions, color, normals) {
-    var arr = [];
-    // Key light dari arah atas-kanan-depan
-    var lx = 0.45, ly = 0.75, lz = 0.50;
-    var llen = Math.sqrt(lx*lx + ly*ly + lz*lz);
-    lx /= llen; ly /= llen; lz /= llen;
-
-    for (var i = 0; i < positions.length; i++) {
-        var r = color[0], g = color[1], b = color[2];
-
-        // Hitung pencahayaan hanya jika normal tersedia dan warna bukan hitam pekat
-        if (normals && normals[i] && (r > 0.05 || g > 0.05 || b > 0.05)) {
-            var n = normals[i];
-            var nlen = Math.sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
-            if (nlen > 1e-6) {
-                var nx = n[0]/nlen, ny = n[1]/nlen, nz = n[2]/nlen;
-                var dot = nx*lx + ny*ly + nz*lz;
-                var diff = Math.max(0.0, dot);
-                // Fill light halus dari bawah-belakang-kiri agar bayangan tidak gelap gulita
-                var fill = Math.max(0.0, -nx*0.25 - ny*0.35 - nz*0.45) * 0.18;
-                // Ambient + Diffuse + Fill
-                var factor = 0.64 + 0.36 * diff + fill;
-                r = Math.min(1.0, r * factor);
-                g = Math.min(1.0, g * factor);
-                b = Math.min(1.0, b * factor);
-            }
-        }
-
-        arr.push(positions[i][0], positions[i][1], positions[i][2], r, g, b);
-    }
-    return arr;
-}
-
-// ─────────────────────────────────────────────────────────
-// 1. ELLIPSOID  (badan, kepala, mata, sayap, telapak)
-//    x = a*cos(v)*cos(u), y = b*sin(u), z = c*sin(v)*cos(u)
-//    u ∈ [-π/2, π/2]  (stack),  v ∈ [-π, π] (slice)
-//    Mendukung parameter opsional taperTop & taperBottom untuk
-//    menghasilkan bentuk kepala/badan anak ayam yang mulus organik.
-// ─────────────────────────────────────────────────────────
-function generateEllipsoid(a, b, c, stacks, slices, color, taperTop, taperBottom) {
-    var positions = [];
-    var normals   = [];
-    var indices   = [];
-    taperTop    = taperTop    || 0;
-    taperBottom = taperBottom || 0;
-
-    for (var i = 0; i <= stacks; i++) {
-        var u = i / stacks * Math.PI - Math.PI / 2;
-        var cosU = Math.cos(u);
-        var sinU = Math.sin(u);
-
-        // Faktor taper: mengecil di atas (dome chick crown) & mengembang di pipi bawah
-        var scaleXZ = 1.0;
-        if (sinU > 0 && taperTop !== 0) {
-            scaleXZ = 1.0 - taperTop * sinU;
-        } else if (sinU < 0 && taperBottom !== 0) {
-            scaleXZ = 1.0 - taperBottom * (-sinU);
-        }
-
-        for (var j = 0; j <= slices; j++) {
-            var v = j / slices * 2 * Math.PI - Math.PI;
-            var cosV = Math.cos(v);
-            var sinV = Math.sin(v);
-
-            var effA = a * scaleXZ;
-            var effC = c * scaleXZ;
-
-            var x = effA * cosV * cosU;
-            var y = b * sinU;
-            var z = effC * sinV * cosU;
-
-            positions.push([x, y, z]);
-            // Normal analitik ellipsoid
-            normals.push([cosV * cosU / Math.max(effA, 1e-4), sinU / b, sinV * cosU / Math.max(effC, 1e-4)]);
-        }
-    }
-
-    for (var i = 0; i < stacks; i++) {
-        for (var j = 0; j < slices; j++) {
-            var a0 = i * (slices + 1) + j;
-            var a1 = a0 + 1;
-            var b0 = a0 + (slices + 1);
-            var b1 = b0 + 1;
-            indices.push(a0, a1, b1,  a0, b1, b0);
-        }
-    }
-
-    return { vertices: buildVertices(positions, color, normals), indices: indices };
-}
-
-// ─────────────────────────────────────────────────────────
-// 2. ELLIPTIC PARABOLOID  (paruh bebek)
-//    y = (x/a)^2 + (z/b)^2, diselesaikan secara parametrik:
-//    x = r*cos(θ)*a,  z = r*sin(θ)*b,  y = r^2
-//    r ∈ [0, rMax],  θ ∈ [0, 2π]
-// ─────────────────────────────────────────────────────────
-function generateEllipticParaboloid(a, b, rMax, rings, segments, color) {
-    var positions = [];
-    var normals   = [];
-    var indices   = [];
-
-    for (var i = 0; i <= rings; i++) {
-        var r = (i / rings) * rMax;
-        for (var j = 0; j <= segments; j++) {
-            var theta = (j / segments) * 2 * Math.PI;
-            var cosT = Math.cos(theta);
-            var sinT = Math.sin(theta);
-
-            var x = r * cosT * a;
-            var y = r * r;
-            var z = r * sinT * b;
-
-            positions.push([x, y, z]);
-
-            // Normal analitik: gradien dari y - (x/a)^2 - (z/b)^2 = 0
-            // Normal ke arah luar: (-2x/a^2, 1, -2z/b^2) atau sebaliknya
-            if (r < 1e-5) {
-                normals.push([0, -1, 0]);
-            } else {
-                normals.push([2 * cosT / a, -2 * r, 2 * sinT / b]);
-            }
-        }
-    }
-
-    for (var i = 0; i < rings; i++) {
-        for (var j = 0; j < segments; j++) {
-            var a0 = i * (segments + 1) + j;
-            var a1 = a0 + 1;
-            var b0 = a0 + (segments + 1);
-            var b1 = b0 + 1;
-            indices.push(a0, a1, b1,  a0, b1, b0);
-        }
-    }
-
-    // Penutup pangkal paraboloid di r = rMax (supaya mesh tertutup rapi)
-    var centerIndex = positions.length;
-    positions.push([0, rMax * rMax, 0]);
-    normals.push([0, 1, 0]);
-
-    var lastRingStart = rings * (segments + 1);
-    for (var j = 0; j < segments; j++) {
-        indices.push(centerIndex, lastRingStart + j, lastRingStart + j + 1);
-    }
-
-    return { vertices: buildVertices(positions, color, normals), indices: indices };
-}
-
-// ─────────────────────────────────────────────────────────
-// 3. CONE  (taring & jambul belakang kepala)
-//    Kerucut meruncing ke satu titik di atas (tip di y=height)
-//    baseRadius → 0 dari y=0 ke y=height
-// ─────────────────────────────────────────────────────────
-function generateCone(baseRadius, height, segments, color) {
-    var positions = [];
-    var normals   = [];
-    var indices   = [];
-
-    // Kemiringan normal selimut kerucut
-    var slope = baseRadius / Math.max(height, 1e-4);
-
-    // Titik puncak (tip)
-    var tipIndex = 0;
-    positions.push([0, height, 0]);
-    normals.push([0, 1, 0]);
-
-    // Titik pusat dasar
-    var centerIndex = 1;
-    positions.push([0, 0, 0]);
-    normals.push([0, -1, 0]);
-
-    // Lingkaran dasar
-    var baseStart = 2;
-    for (var j = 0; j <= segments; j++) {
-        var theta = (j / segments) * 2 * Math.PI;
-        var cosT = Math.cos(theta);
-        var sinT = Math.sin(theta);
-
-        positions.push([baseRadius * cosT, 0, baseRadius * sinT]);
-        normals.push([cosT, slope, sinT]);
-    }
-
-    // Sisi kerucut (tip → lingkaran dasar)
-    for (var j = 0; j < segments; j++) {
-        indices.push(tipIndex, baseStart + j, baseStart + j + 1);
-    }
-
-    // Penutup dasar
-    for (var j = 0; j < segments; j++) {
-        indices.push(centerIndex, baseStart + j + 1, baseStart + j);
-    }
-
-    return { vertices: buildVertices(positions, color, normals), indices: indices };
-}
-
-// ─────────────────────────────────────────────────────────
-// 4. CYLINDER  (kaki)
-//    Tabung dari y=0 ke y=height, radius uniform
-// ─────────────────────────────────────────────────────────
-function generateCylinder(radius, height, segments, color) {
-    var positions = [];
-    var normals   = [];
-    var indices   = [];
-
-    // Lingkaran bawah (y=0) + tutup bawah
-    var botCenter = 0;
-    positions.push([0, 0, 0]);
-    normals.push([0, -1, 0]);
-
-    var botRingStart = 1;
-    for (var j = 0; j <= segments; j++) {
-        var theta = (j / segments) * 2 * Math.PI;
-        var cosT = Math.cos(theta);
-        var sinT = Math.sin(theta);
-        positions.push([radius * cosT, 0, radius * sinT]);
-        normals.push([cosT, 0, sinT]);
-    }
-
-    // Lingkaran atas (y=height) + tutup atas
-    var topCenter = botRingStart + segments + 1;
-    positions.push([0, height, 0]);
-    normals.push([0, 1, 0]);
-
-    var topRingStart = topCenter + 1;
-    for (var j = 0; j <= segments; j++) {
-        var theta = (j / segments) * 2 * Math.PI;
-        var cosT = Math.cos(theta);
-        var sinT = Math.sin(theta);
-        positions.push([radius * cosT, height, radius * sinT]);
-        normals.push([cosT, 0, sinT]);
-    }
-
-    // Tutup bawah
-    for (var j = 0; j < segments; j++) {
-        indices.push(botCenter, botRingStart + j + 1, botRingStart + j);
-    }
-
-    // Tutup atas
-    for (var j = 0; j < segments; j++) {
-        indices.push(topCenter, topRingStart + j, topRingStart + j + 1);
-    }
-
-    // Sisi tabung
-    for (var j = 0; j < segments; j++) {
-        var b0 = botRingStart + j;
-        var b1 = botRingStart + j + 1;
-        var t0 = topRingStart + j;
-        var t1 = topRingStart + j + 1;
-        indices.push(b0, b1, t1,  b0, t1, t0);
-    }
-
-    return { vertices: buildVertices(positions, color, normals), indices: indices };
-}
-
-// ─────────────────────────────────────────────────────────
-// 5. BEZIER SWEEP  (ekor)
-//    Kurva Bezier 3D kubik sebagai spine, disapu lingkaran
-// ─────────────────────────────────────────────────────────
-
-/** Evaluasi titik pada kurva Bezier kubik */
-function bezierCubic(P0, P1, P2, P3, t) {
-    var mt  = 1 - t;
-    var mt2 = mt * mt;
-    var mt3 = mt2 * mt;
-    var t2  = t * t;
-    var t3  = t2 * t;
-    return [
-        mt3*P0[0] + 3*mt2*t*P1[0] + 3*mt*t2*P2[0] + t3*P3[0],
-        mt3*P0[1] + 3*mt2*t*P1[1] + 3*mt*t2*P2[1] + t3*P3[1],
-        mt3*P0[2] + 3*mt2*t*P1[2] + 3*mt*t2*P2[2] + t3*P3[2]
-    ];
-}
-
-/** Normalize vektor 3D */
-function normalize3(v) {
-    var len = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-    if (len < 1e-8) return [0, 1, 0];
-    return [v[0]/len, v[1]/len, v[2]/len];
-}
-
-/** Cross product */
-function cross3(a, b) {
-    return [
-        a[1]*b[2] - a[2]*b[1],
-        a[2]*b[0] - a[0]*b[2],
-        a[0]*b[1] - a[1]*b[0]
-    ];
-}
-
-/**
- * Buat mesh ekor dengan Bezier sweep.
- * Kontrol point dalam ruang lokal (akar ekor di origin).
- * Radius menyempit dari baseRadius → tipRadius.
- */
-function generateBezierSweep(P0, P1, P2, P3,
-                              baseRadius, tipRadius,
-                              segments, slices, color) {
-    var positions = [];
-    var normals   = [];
-    var indices   = [];
-
-    for (var i = 0; i <= segments; i++) {
-        var t     = i / segments;
-        var pt    = bezierCubic(P0, P1, P2, P3, t);
-        var t1    = Math.min(t + 0.001, 1);
-        var pt1   = bezierCubic(P0, P1, P2, P3, t1);
-
-        // Tangent (arah spine)
-        var tangent = normalize3([pt1[0]-pt[0], pt1[1]-pt[1], pt1[2]-pt[2]]);
-
-        // Bangun local frame
-        var up = Math.abs(tangent[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
-        var right  = normalize3(cross3(tangent, up));
-        var up2    = cross3(right, tangent);
-
-        var radius = baseRadius + (tipRadius - baseRadius) * t;
-
-        for (var j = 0; j <= slices; j++) {
-            var theta = (j / slices) * 2 * Math.PI;
-            var cos   = Math.cos(theta), sin = Math.sin(theta);
-            
-            var nx = cos*right[0] + sin*up2[0];
-            var ny = cos*right[1] + sin*up2[1];
-            var nz = cos*right[2] + sin*up2[2];
-
-            positions.push([
-                pt[0] + radius * nx,
-                pt[1] + radius * ny,
-                pt[2] + radius * nz
-            ]);
-            normals.push([nx, ny, nz]);
-        }
-    }
-
-    for (var i = 0; i < segments; i++) {
-        for (var j = 0; j < slices; j++) {
-            var a0 = i * (slices + 1) + j;
-            var a1 = a0 + 1;
-            var b0 = a0 + (slices + 1);
-            var b1 = b0 + 1;
-            indices.push(a0, a1, b1,  a0, b1, b0);
-        }
-    }
-
-    return { vertices: buildVertices(positions, color, normals), indices: indices };
-}
-
-// ─────────────────────────────────────────────────────────
-// 6. BEZIER DUCK TAIL (Ekor Baji Bebek Berbasis Kurva Bezier 3D)
-//    Membentuk badan belakang & ekor yang menyatu mulus (bukan batang).
-//    Menggunakan 2 kurva Bezier 3D (dorsal/atas & ventral/bawah)
-//    yang disapu ke belakang & melengkung anggun ke atas.
-// ─────────────────────────────────────────────────────────
-function generateBezierDuckTail(T, B, baseWidth, tipWidth, segments, slices, color) {
-    var positions = [];
-    var normals   = [];
-    var indices   = [];
-    var grid      = []; // 2D grid [segments+1][slices+1]
-
-    for (var i = 0; i <= segments; i++) {
-        var t = i / segments;
-        var ptTop = bezierCubic(T[0], T[1], T[2], T[3], t);
-        var ptBot = bezierCubic(B[0], B[1], B[2], B[3], t);
-
-        // Center spine dan vektor tinggi cross-section
-        var midX = (ptTop[0] + ptBot[0]) * 0.5;
-        var midY = (ptTop[1] + ptBot[1]) * 0.5;
-        var midZ = (ptTop[2] + ptBot[2]) * 0.5;
-
-        var hy = (ptTop[1] - ptBot[1]) * 0.5;
-        var hz = (ptTop[2] - ptBot[2]) * 0.5;
-
-        // Lebar melintang (X): montok di pangkal badan, tebal di tengah, menyatu anggun ke ujung
-        var w = baseWidth * Math.pow(1.0 - t, 0.55) + tipWidth * t;
-
-        var row = [];
-        for (var j = 0; j <= slices; j++) {
-            var theta = (j / slices) * 2 * Math.PI;
-            var cosT  = Math.cos(theta); // arah lebar (X)
-            var sinT  = Math.sin(theta); // arah tinggi (Y-Z)
-
-            var x = midX + w * cosT;
-            var y = midY + hy * sinT;
-            var z = midZ + hz * sinT;
-
-            row.push([x, y, z]);
-        }
-        grid.push(row);
-    }
-
-    // Hitung posisi dan normal grid yang halus dari cross product
-    for (var i = 0; i <= segments; i++) {
-        for (var j = 0; j <= slices; j++) {
-            positions.push(grid[i][j]);
-
-            var i0 = Math.max(0, i - 1);
-            var i1 = Math.min(segments, i + 1);
-            var j0 = (j - 1 + slices) % slices;
-            var j1 = (j + 1) % slices;
-
-            var du = [
-                grid[i1][j][0] - grid[i0][j][0],
-                grid[i1][j][1] - grid[i0][j][1],
-                grid[i1][j][2] - grid[i0][j][2]
-            ];
-            var dv = [
-                grid[i][j1][0] - grid[i][j0][0],
-                grid[i][j1][1] - grid[i][j0][1],
-                grid[i][j1][2] - grid[i][j0][2]
-            ];
-
-            var nx = du[1]*dv[2] - du[2]*dv[1];
-            var ny = du[2]*dv[0] - du[0]*dv[2];
-            var nz = du[0]*dv[1] - du[1]*dv[0];
-            var nlen = Math.sqrt(nx*nx + ny*ny + nz*nz);
-            if (nlen < 1e-6) {
-                normals.push([0, 1, 0]);
-            } else {
-                normals.push([nx / nlen, ny / nlen, nz / nlen]);
-            }
-        }
-    }
-
-    // Grid indices
-    for (var i = 0; i < segments; i++) {
-        for (var j = 0; j < slices; j++) {
-            var a0 = i * (slices + 1) + j;
-            var a1 = a0 + 1;
-            var b0 = a0 + (slices + 1);
-            var b1 = b0 + 1;
-            indices.push(a0, a1, b1,  a0, b1, b0);
-        }
-    }
-
-    // Penutup pangkal di t=0 (berada di dalam badan)
-    var centerIndex = positions.length;
-    var baseMidX = (T[0][0] + B[0][0]) * 0.5;
-    var baseMidY = (T[0][1] + B[0][1]) * 0.5;
-    var baseMidZ = (T[0][2] + B[0][2]) * 0.5;
-    positions.push([baseMidX, baseMidY, baseMidZ]);
-    normals.push([0, 0, 1]); // mengarah ke dalam badan (+Z)
-
-    for (var j = 0; j < slices; j++) {
-        indices.push(centerIndex, j + 1, j);
-    }
-
-    // Penutup ujung di t=1 (tip ekor) - berbentuk jentikan runcing membulat
-    var tipCenterIndex = positions.length;
-    var tipMidX = (T[3][0] + B[3][0]) * 0.5;
-    var tipMidY = (T[3][1] + B[3][1]) * 0.5;
-    var tipMidZ = (T[3][2] + B[3][2]) * 0.5 - 0.02;
-    positions.push([tipMidX, tipMidY, tipMidZ]);
-    normals.push([0, 0.55, -0.83]); // mengarah ke belakang-atas melengkung
-
-    var tipRingStart = segments * (slices + 1);
-    for (var j = 0; j < slices; j++) {
-        indices.push(tipCenterIndex, tipRingStart + j, tipRingStart + j + 1);
-    }
-
-    return { vertices: buildVertices(positions, color, normals), indices: indices };
-}
-
-// ─────────────────────────────────────────────────────────
-// 6b. DUCK HEAD WITH BEZIER BACK BUMP
-//     Ellipsoid kepala di mana bagian belakang (cosT < 0)
-//     ditarik keluar secara smooth via Bezier kubik,
-//     membentuk punuk/bun membulat di belakang kepala
-//     persis seperti siluet Apex Predator R.E.P.O.
-//     Bagian depan (cosT > 0) tetap bulat sempurna untuk muka.
-// ─────────────────────────────────────────────────────────
-function generateDuckHeadWithBezierBack(a, b, c, stacks, slices, color, backBump, bumpY) {
-    // a        = radius X (kiri-kanan)
-    // b        = radius Y (atas-bawah)
-    // c        = radius Z (depan-depan, bagian muka)
-    // backBump = seberapa jauh punuk belakang menonjol ke -Z (contoh: 0.35)
-    // bumpY    = seberapa naik punuk ke +Y (contoh: 0.08)
-    backBump = backBump || 0.30;
-    bumpY    = bumpY    || 0.06;
-
-    var grid = []; // 2D array [stacks+1][slices+1]
-
-    for (var i = 0; i <= stacks; i++) {
-        var u    = i / stacks;
-        var phi  = u * Math.PI - Math.PI / 2; // -pi/2 (bawah) s.d. +pi/2 (atas)
-        var sinPhi = Math.sin(phi);
-        var cosPhi = Math.cos(phi);
-
-        var row = [];
-        for (var j = 0; j <= slices; j++) {
-            var theta = j / slices * 2 * Math.PI - Math.PI; // -pi s.d. +pi
-            var cosT  = Math.cos(theta); // +1=depan(+Z), -1=belakang(-Z)
-            var sinT  = Math.sin(theta); // kiri-kanan (X)
-
-            // Posisi dasar ellipsoid
-            var x = a * sinT  * cosPhi;
-            var y = b * sinPhi;
-            var z = c * cosT  * cosPhi;
-
-            // Terapkan Bezier bump hanya di bagian belakang (cosT < 0)
-            if (cosT < 0) {
-                // backAmt: 0 di samping, 1 di garis tengah belakang
-                var backAmt = -cosT;
-
-                // Bezier cubic smooth: 0 → lembut naik → puncak
-                var t  = backAmt;
-                var mt = 1 - t;
-                var bumpFactor = 3*mt*mt*t*0.20 + 3*mt*t*t*0.85 + t*t*t*1.0;
-
-                // Hanya aktif di area tengah vertikal agar membulat organik
-                var vertMask = Math.max(0, 1.0 - Math.abs(sinPhi) * 1.4);
-                vertMask     = Math.pow(vertMask, 0.55);
-
-                var finalBump = bumpFactor * vertMask;
-
-                z -= backBump * finalBump; // dorong ke belakang (-Z)
-                y += bumpY   * finalBump; // angkat sedikit ke atas (+Y)
-            }
-
-            row.push([x, y, z]);
-        }
-        grid.push(row);
-    }
-
-    // Hitung normal dari cross product tetangga grid
-    var positions = [];
-    var normals   = [];
-    var indices   = [];
-
-    for (var i = 0; i <= stacks; i++) {
-        for (var j = 0; j <= slices; j++) {
-            positions.push(grid[i][j]);
-
-            var iPrev = Math.max(0, i - 1);
-            var iNext = Math.min(stacks, i + 1);
-            var du = [
-                grid[iNext][j][0] - grid[iPrev][j][0],
-                grid[iNext][j][1] - grid[iPrev][j][1],
-                grid[iNext][j][2] - grid[iPrev][j][2]
-            ];
-
-            var jPrev = (j - 1 + slices) % slices;
-            var jNext = (j + 1) % slices;
-            var dv = [
-                grid[i][jNext][0] - grid[i][jPrev][0],
-                grid[i][jNext][1] - grid[i][jPrev][1],
-                grid[i][jNext][2] - grid[i][jPrev][2]
-            ];
-
-            var n = cross3(dv, du);
-            normals.push(normalize3(n));
-        }
-    }
-
-    // Indeks segitiga
-    for (var i = 0; i < stacks; i++) {
-        for (var j = 0; j < slices; j++) {
-            var a0 = i * (slices + 1) + j;
-            var a1 = a0 + 1;
-            var b0 = a0 + (slices + 1);
-            var b1 = b0 + 1;
-            indices.push(a0, a1, b1,  a0, b1, b0);
-        }
-    }
-
-    return { vertices: buildVertices(positions, color, normals), indices: indices };
-}
-
-/** Evaluasi titik 1D pada kurva Bezier kubik */
-function bezierCubic1D(p0, p1, p2, p3, t) {
-    var mt  = 1 - t;
-    var mt2 = mt * mt;
-    var mt3 = mt2 * mt;
-    var t2  = t * t;
-    var t3  = t2 * t;
-    return mt3*p0 + 3*mt2*t*p1 + 3*mt*t2*p2 + t3*p3;
-}
-
-// ─────────────────────────────────────────────────────────
-// 7. SEAMLESS DUCK BODY WITH BEZIER TAIL
-//    Satu kesatuan mesh utuh (100% tanpa sambungan/seam)
-//    di mana badan belakang mengalir mulus menjentik menjadi ekor
-//    berdasarkan kurva Bezier 3D, persis seperti miniatur figurine.
-// ─────────────────────────────────────────────────────────
-function generateDuckBodyWithBezierTail(a, b, c, stacks, slices, color) {
-    var grid = []; // 2D array [stacks+1][slices+1] of [x, y, z]
-
-    for (var i = 0; i <= stacks; i++) {
-        var u = i / stacks; // 0 (bawah) s.d. 1 (leher atas)
-        var phi = u * Math.PI - Math.PI / 2; // -pi/2 s.d. +pi/2
-        var sinPhi = Math.sin(phi);
-        var cosPhi = Math.cos(phi);
-
-        // Sedikit lebih ramping di leher atas, buncit di perut bawah
-        var effA = a * (1.0 - 0.12 * Math.max(0.0, sinPhi));
-        var effB = b;
-        var effC = c;
-
-        // Kontrol profil ekor berbasis kurva Bezier kubik dengan puncak lancip (cusp)
-        // Aktif dari u=0.18 (dasar panggul belakang) s.d. u=0.82 (punggung atas)
-        var tailFactor = 0;
-        if (u >= 0.18 && u <= 0.82) {
-            var tu = (u - 0.18) / (0.82 - 0.18); // parameter t in [0, 1]
-            var peakU = 0.58; // posisi puncak ekor
-            if (tu <= peakU) {
-                // Busur bawah: menyapu naik ke puncak
-                var s = tu / peakU;
-                tailFactor = bezierCubic1D(0.0, 0.15, 0.65, 1.0, s);
-            } else {
-                // Busur atas: melandai anggun ke punggung
-                var s = (1.0 - tu) / (1.0 - peakU);
-                tailFactor = bezierCubic1D(0.0, 0.18, 0.70, 1.0, s);
-            }
-        }
-
-        var row = [];
-        for (var j = 0; j <= slices; j++) {
-            var theta = j / slices * 2 * Math.PI - Math.PI; // -pi s.d. +pi
-            var cosT  = Math.cos(theta); // +1 di depan (+Z), -1 di belakang (-Z)
-            var sinT  = Math.sin(theta); // samping (+X / -X)
-
-            var x = effA * sinT * cosPhi;
-            var y = effB * sinPhi;
-            var z = effC * cosT * cosPhi;
-
-            // Di bagian belakang (cosT < 0), tarik permukaan menyatu membentuk ekor
-            if (cosT < 0 && tailFactor > 0) {
-                var backAmt = -cosT; // 0 di samping, 1 di garis tengah belakang
-                // Baji ekor: memusat tajam di punggung tengah belakang membentuk ujung lancip
-                var keel = Math.pow(backAmt, 3.2);
-
-                // Ekstensi keluar ke belakang (-Z) dan angkat ke atas (+Y)
-                var extZ = 0.78 * tailFactor * keel;
-                var extY = 0.46 * tailFactor * keel;
-
-                z -= extZ;
-                y += extY;
-            }
-
-            row.push([x, y, z]);
-        }
-        grid.push(row);
-    }
-
-    // Hitung vektor normal analitik halus dari cross product grid
-    var positions = [];
-    var normals   = [];
-    var indices   = [];
-
-    for (var i = 0; i <= stacks; i++) {
-        for (var j = 0; j <= slices; j++) {
-            var p = grid[i][j];
-            positions.push(p);
-
-            var iPrev = Math.max(0, i - 1);
-            var iNext = Math.min(stacks, i + 1);
-            var du = [
-                grid[iNext][j][0] - grid[iPrev][j][0],
-                grid[iNext][j][1] - grid[iPrev][j][1],
-                grid[iNext][j][2] - grid[iPrev][j][2]
-            ];
-
-            var jPrev = (j - 1 + slices) % slices;
-            var jNext = (j + 1) % slices;
-            var dv = [
-                grid[i][jNext][0] - grid[i][jPrev][0],
-                grid[i][jNext][1] - grid[i][jPrev][1],
-                grid[i][jNext][2] - grid[i][jPrev][2]
-            ];
-
-            var n = cross3(dv, du);
-            normals.push(normalize3(n));
-        }
-    }
-
-    // Indeks segitiga
-    for (var i = 0; i < stacks; i++) {
-        for (var j = 0; j < slices; j++) {
-            var a0 = i * (slices + 1) + j;
-            var a1 = a0 + 1;
-            var b0 = a0 + (slices + 1);
-            var b1 = b0 + 1;
-            indices.push(a0, a1, b1,  a0, b1, b0);
-        }
-    }
-
-    return { vertices: buildVertices(positions, color, normals), indices: indices };
-}
-
-// ─────────────────────────────────────────────────────────
-// 8. CHICK WING WITH 3 INTEGRATED FINGERS (Sayap Terpadu)
-//    Membentuk sayap anak ayam utuh di mana 3 jari di tepi belakang
-//    tergabung langsung sebagai satu kesatuan geometri tanpa sambungan.
-// ─────────────────────────────────────────────────────────
-function generateChickWing(isLeft, color) {
-    var az = 0.28;         // semi-axis kedalaman (depan-ke-belakang)
-    var by = 0.44;         // semi-axis tinggi
-    var thickOuter = 0.15; // cembung sisi luar (menjauh dari badan)
-    var thickInner = 0.05; // sisi dalam yang menempel ke badan
-    var stacks = 18;
-    var slices = 48;
-
-    var grid = [];
-
-    for (var i = 0; i <= stacks; i++) {
-        var phi = (i / stacks) * Math.PI - Math.PI / 2; // -pi/2 s.d. +pi/2
-        var sinPhi = Math.sin(phi);
-        var cosPhi = Math.cos(phi);
-        var rho    = Math.max(0.0, cosPhi);
-
-        // Tebal sisi luar vs dalam
-        var x;
-        if (sinPhi >= 0) {
-            x = (isLeft ? -1 : 1) * thickOuter * sinPhi;
-        } else {
-            x = (isLeft ? 1 : -1) * thickInner * (-sinPhi);
-        }
-
-        var row = [];
-        for (var j = 0; j <= slices; j++) {
-            var theta = (j / slices) * 2 * Math.PI;
-            var cosT  = Math.cos(theta); // arah Z (depan/belakang)
-            var sinT  = Math.sin(theta); // arah Y (atas/bawah)
-
-            var rBase = 1.0 / Math.sqrt((cosT / az) * (cosT / az) + (sinT / by) * (sinT / by));
-
-            // Tambahkan 3 jari (fingers / feather scallops) pada tepi belakang (cosT < 0)
-            var deltaR = 0;
-            if (theta >= Math.PI * 0.5 && theta <= Math.PI * 1.5) {
-                var tau = (theta - Math.PI * 0.5) / Math.PI; // 0 di bahu atas s.d. 1 di ujung bawah
-                var lobe = Math.abs(Math.sin(3.0 * Math.PI * tau));
-                var finger = Math.pow(lobe, 1.35);
-                // Jari tengah sedikit lebih menonjol
-                var lengthMult = 1.0 + 0.35 * Math.sin(Math.PI * tau);
-                deltaR = 0.20 * finger * lengthMult;
-            }
-
-            var r = rBase + deltaR;
-            var z = r * cosT;
-            var y = r * sinT;
-
-            // Kelengkungan alami lengan anak ayam (bahu agak ke belakang, siku/tangan ke depan)
-            var zTilted = z - 0.06 * (y / by);
-            var yTilted = y;
-
-            row.push([x, rho * yTilted, rho * zTilted]);
-        }
-        grid.push(row);
-    }
-
-    var positions = [];
-    var normals   = [];
-    var indices   = [];
-
-    // Hitung posisi dan normal grid yang halus dari cross product
-    for (var i = 0; i <= stacks; i++) {
-        for (var j = 0; j <= slices; j++) {
-            positions.push(grid[i][j]);
-
-            var i0 = Math.max(0, i - 1);
-            var i1 = Math.min(stacks, i + 1);
-            var j0 = (j - 1 + slices) % slices;
-            var j1 = (j + 1) % slices;
-
-            var du = [
-                grid[i1][j][0] - grid[i0][j][0],
-                grid[i1][j][1] - grid[i0][j][1],
-                grid[i1][j][2] - grid[i0][j][2]
-            ];
-            var dv = [
-                grid[i][j1][0] - grid[i][j0][0],
-                grid[i][j1][1] - grid[i][j0][1],
-                grid[i][j1][2] - grid[i][j0][2]
-            ];
-
-            // Arah normal keluar
-            var nx, ny, nz;
-            if (isLeft) {
-                nx = dv[1]*du[2] - dv[2]*du[1];
-                ny = dv[2]*du[0] - dv[0]*du[2];
-                nz = dv[0]*du[1] - dv[1]*du[0];
-            } else {
-                nx = du[1]*dv[2] - du[2]*dv[1];
-                ny = du[2]*dv[0] - du[0]*dv[2];
-                nz = du[0]*dv[1] - du[1]*du[0];
-            }
-
-            var nlen = Math.sqrt(nx*nx + ny*ny + nz*nz);
-            if (nlen < 1e-6) {
-                normals.push([isLeft ? -1 : 1, 0, 0]);
-            } else {
-                normals.push([nx / nlen, ny / nlen, nz / nlen]);
-            }
-        }
-    }
-
-    // Grid triangles
-    for (var i = 0; i < stacks; i++) {
-        for (var j = 0; j < slices; j++) {
-            var a0 = i * (slices + 1) + j;
-            var a1 = a0 + 1;
-            var b0 = a0 + (slices + 1);
-            var b1 = b0 + 1;
-            indices.push(a0, a1, b1,  a0, b1, b0);
-        }
-    }
-
-    return { vertices: buildVertices(positions, color, normals), indices: indices };
-}
-
-
-
-// =========================================================================
-
-// 2. SCENE GRAPH (HIERARCHICAL TRANSFORMATION)
-
-// =========================================================================
-
-/**
- * SceneNode.js
- * Node scene graph untuk hierarki transformasi model 3D.
- * Setiap node menyimpan geometry-nya sendiri dan daftar anak.
- *
- * Sistem matriks mengikuti pola Pertemuan 5 (MyObject.js):
- *   MODEL = MOVE_MATRIX * POSITION_MATRIX * PARENT_MATRIX
- */
-
-class SceneNode {
-    constructor(GL, SHADER_PROGRAM, _position, _color, _Mmatrix) {
-        this.GL             = GL;
-        this.SHADER_PROGRAM = SHADER_PROGRAM;
-        this._position      = _position;
-        this._color         = _color;
-        this._Mmatrix       = _Mmatrix;
-
-        this.vertex         = [];   // [x,y,z,r,g,b, ...]
-        this.faces          = [];   // indices
-
-        this.OBJECT_VERTEX  = null;
-        this.OBJECT_FACES   = null;
-        this.faceCount      = 0;
-
-        // Matriks pose statis (set sekali di awal)
-        this.POSITION_MATRIX = LIBS.get_I4();
-        // Matriks animasi (diupdate tiap frame)
-        this.MOVE_MATRIX     = LIBS.get_I4();
-
-        this.visible = true;
-        this.children = [];
-    }
-
-    /** Assign geometry dari hasil fungsi generate* */
-    setGeometry(geomData) {
-        this.vertex    = geomData.vertices;
-        this.faces     = geomData.indices;
-        this.faceCount = geomData.indices.length;
-    }
-
-    /** Upload semua buffer ke GPU, rekursif ke anak */
-    setup() {
-        if (this.vertex.length > 0) {
-            this.OBJECT_VERTEX = this.GL.createBuffer();
-            this.GL.bindBuffer(this.GL.ARRAY_BUFFER, this.OBJECT_VERTEX);
-            this.GL.bufferData(this.GL.ARRAY_BUFFER,
-                               new Float32Array(this.vertex),
-                               this.GL.STATIC_DRAW);
-
-            this.OBJECT_FACES = this.GL.createBuffer();
-            this.GL.bindBuffer(this.GL.ELEMENT_ARRAY_BUFFER, this.OBJECT_FACES);
-            this.GL.bufferData(this.GL.ELEMENT_ARRAY_BUFFER,
-                               new Uint16Array(this.faces),
-                               this.GL.STATIC_DRAW);
-        }
-        this.children.forEach(child => child.setup());
-    }
-
-    /**
-     * Render node dan anak-anaknya secara rekursif.
-     * @param {number[]} parentMatrix  Model matrix dari parent (flat 16 floats)
-     */
-    render(parentMatrix) {
-        // MODEL = MOVE * POS * PARENT
-        var model = LIBS.multiply(this.MOVE_MATRIX, this.POSITION_MATRIX);
-        model     = LIBS.multiply(model, parentMatrix);
-
-        if (this.visible && this.OBJECT_VERTEX) {
-            this.GL.uniformMatrix4fv(this._Mmatrix, false, model);
-
-            this.GL.bindBuffer(this.GL.ARRAY_BUFFER, this.OBJECT_VERTEX);
-            // stride = 6 float * 4 byte = 24 byte
-            this.GL.vertexAttribPointer(this._position, 3, this.GL.FLOAT, false, 24, 0);
-            this.GL.vertexAttribPointer(this._color,    3, this.GL.FLOAT, false, 24, 12);
-
-            this.GL.bindBuffer(this.GL.ELEMENT_ARRAY_BUFFER, this.OBJECT_FACES);
-            this.GL.drawElements(this.GL.TRIANGLES, this.faceCount,
-                                 this.GL.UNSIGNED_SHORT, 0);
-        }
-
-        this.children.forEach(child => child.render(model));
-    }
-}
-
-
-
-// =========================================================================
-
-// 3. APEX PREDATOR MODEL (R.E.P.O.)
-
-// =========================================================================
-
-/**
- * model.js  –  Apex Predator (R.E.P.O.)
- * 
- * Karakter anak ayam pemangsa kuning (Apex Predator):
- * - Memenuhi syarat akademis:
- *   1. Kurva 3D: Bezier Duck Tail (Kurva Bezier 3D kubik dorsal & ventral untuk ekor bebek bervolume).
- *   2. Tiga+ jenis Quadratic Object berbeda:
- *      - Ellipsoid          : Badan, kepala (tapered dome), mata, lengan, telapak & jari kaki
- *      - Elliptic Paraboloid: Paruh atas & paruh bawah (beak)
- *      - Cone (Kerucut)     : Jambul belakang kepala (crest) & taring tersembunyi (fangs)
- *      - Cylinder (Silinder): Batang kaki (legs)
- * - Warna: Kuning cerah anak ayam (#FFD21A), mata hitam pekat tanpa glare.
- * - Detail tangan: Dilengkapi 3 ujung bulu/jari pada tepi sayap sesuai siluet game.
- * - Jambul kepala: Jambul khas di belakang kepala sesuai siluet tampak samping.
- */
-
-var C = {
-    body     : [0.98, 0.82, 0.12],   // Kuning anak ayam cerah & hangat
-    belly    : [1.00, 0.88, 0.24],   // Kuning sedikit lebih lembut/terang untuk perut depan
-    crest    : [0.98, 0.80, 0.10],   // Kuning jambul kepala
-    eye      : [0.02, 0.02, 0.02],   // Hitam pekat full
-    beak     : [0.96, 0.78, 0.50],   // Oranye-peachy muda lembut (paruh bebek asli)
-    jaw      : [0.80, 0.16, 0.24],   // Merah crimson rahang predator
-    mouth    : [0.45, 0.12, 0.12],   // Interior mulut gelap kemerahan
-    fang     : [0.98, 0.98, 0.90],   // Gading putih taring
-    arm      : [0.98, 0.82, 0.12],   // Kuning sayap/lengan
-    leg      : [0.94, 0.58, 0.12],   // Oranye kaki bebek
-    foot     : [0.94, 0.60, 0.14],   // Oranye telapak kaki
-    toe      : [0.92, 0.56, 0.12],   // Oranye jari
-    tail     : [0.98, 0.82, 0.12],   // Kuning ekor
-};
-
-/**
- * Bangun seluruh scene graph karakter Apex Predator.
- * Mengembalikan objek berisi root dan referensi ke node animasi.
- */
-function buildApexPredator(GL, prog, _pos, _col, _Mmat) {
-
-    function mkNode() {
-        return new SceneNode(GL, prog, _pos, _col, _Mmat);
-    }
-    function tx(node, x) { LIBS.translateX(node.POSITION_MATRIX, x); }
-    function ty(node, y) { LIBS.translateY(node.POSITION_MATRIX, y); }
-    function tz(node, z) { LIBS.translateZ(node.POSITION_MATRIX, z); }
-    function pos(node, x, y, z) { tx(node,x); ty(node,y); tz(node,z); }
-    function rx(node, a) { LIBS.rotateX(node.POSITION_MATRIX, a); }
-    function ry(node, a) { LIBS.rotateY(node.POSITION_MATRIX, a); }
-    function rz(node, a) { LIBS.rotateZ(node.POSITION_MATRIX, a); }
-
-    // ══════════════════════════════════════════════════════════════
-    //  1. BADAN (BODY) — Quadric: ELLIPSOID
-    // ══════════════════════════════════════════════════════════════
-    var body = mkNode();
-    body.setGeometry(generateEllipsoid(0.96, 1.04, 0.90, 28, 40, C.body, 0.16, -0.10));
-    ty(body, 0.15);
-
-    // Perut buncit depan
-    var belly = mkNode();
-    belly.setGeometry(generateEllipsoid(0.74, 0.80, 0.52, 22, 32, C.belly));
-    pos(belly, 0, -0.15, 0.44);
-
-    // ══════════════════════════════════════════════════════════════
-    //  2. KEPALA (HEAD) — Quadric: ELLIPSOID + CONE CREST
-    // ══════════════════════════════════════════════════════════════
-    var head = mkNode();
-    // Kepala: bagian depan bulat untuk muka, belakang melengkung via Bezier
-    // seperti siluet Apex Predator R.E.P.O. — punuk bulat organik di belakang
-    // a=1.05 (lebar), b=1.02 (tinggi), c=1.00 (radius depan)
-    // backBump=0.38 (seberapa jauh punuk belakang), bumpY=0.10 (sedikit naik)
-    head.setGeometry(generateDuckHeadWithBezierBack(1.05, 1.02, 1.00, 32, 44, C.body, 0.38, 0.10));
-    pos(head, 0, 1.42, 0.00);
-
-    // ══════════════════════════════════════════════════════════════
-    //  3a. PARUH BEBEK BIASA (MODE 1) — ELLIPTIC PARABOLOID
-    //      Pose-nya diatur oleh setPredatorAmount(t)
-    // ══════════════════════════════════════════════════════════════
-    var beakUpper = mkNode();
-    beakUpper.setGeometry(generateEllipticParaboloid(0.72, 0.22, 0.76, 16, 32, C.beak));
-
-    var beakLower = mkNode();
-    beakLower.setGeometry(generateEllipticParaboloid(0.62, 0.16, 0.76, 14, 28, C.beak));
-
-    // Interior mulut (dark red) — hanya tampil saat mode predator
-    var mouthInner = mkNode();
-    mouthInner.setGeometry(generateEllipsoid(0.46, 0.36, 0.14, 16, 24, C.mouth));
-    mouthInner.visible = false;
-    pos(mouthInner, 0, -0.33, 0.90);
-
-    // ══════════════════════════════════════════════════════════════
-    //  3b. RAHANG PREDATOR (MODE 2)
-    //      Elliptic Paraboloid (cangkang rahang panjang) + CONE (gigi)
-    //
-    //      Tiap rahang = node "hinge" (engsel di sudut mulut)
-    //        ├─ shell : paraboloid panjang pipih menyerupai moncong buaya, ujung (tip) di depan
-    //        └─ gigi  : deretan taring kerucut (cone) tajam besar
-    //
-    //      Moncong rahang dibuat panjang maju ke depan (~2.15 unit)
-    //      sesuai siluet Apex Predator R.E.P.O.
-    // ══════════════════════════════════════════════════════════════
-    var JAW_OPEN_UP   = 0.30;   // rad, rahang atas terangkat gagah
-    var JAW_OPEN_DOWN = 0.40;   // rad, rahang bawah membuka ke bawah
-
-    function buildJaw(isUpper) {
-        // D = panjang rahang memanjang ke depan (Z)
-        var D           = isUpper ? 2.15 : 1.98;
-        var rMax        = Math.sqrt(D);          // sehingga D = rMax^2
-        var targetWidth = isUpper ? 0.62 : 0.54; // lebar buaya di pangkal (mendekati lebar kepala)
-        var targetThick = isUpper ? 0.30 : 0.22; // pipih vertikal khas moncong alligator
-        var a           = targetWidth / rMax;    // skala sumbu X elips
-        var b           = targetThick / rMax;    // skala sumbu Y elips
-        var dirY        = isUpper ? -1 : 1;      // arah gigi: atas -> bawah (-1), bawah -> atas (+1)
-
-        var hinge = mkNode();
-
-        // Cangkang rahang (Elliptic Paraboloid panjang khas buaya)
-        var shell = mkNode();
-        shell.setGeometry(generateEllipticParaboloid(a, b, rMax, 24, 40, C.jaw));
-        pos(shell, 0, 0, D);
-        rx(shell, -Math.PI / 2);             // sumbu paraboloid (+y) -> -z, tip di depan (+Z)
-        hinge.children.push(shell);
-
-        // Satu gigi (cone). Cone: pangkal di y=0, ujung di y=len.
-        function addTooth(x, y, z, len, rad, side) {
-            var t = mkNode();
-            t.setGeometry(generateCone(rad, len, 8, C.fang));
-            pos(t, x, y, z);
-            if (isUpper) {                   // ujung taring mengarah ke bawah
-                rx(t, Math.PI);
-                rz(t, side * 0.12);          // condong keluar sedikit mengikuti bibir predator
-            } else {                         // ujung taring mengarah ke atas
-                rz(t, -side * 0.12);
-            }
-            hinge.children.push(t);
-        }
-
-        // Satu baris gigi di sepanjang rahang (kiri & kanan)
-        function addRow(th, len, rad, zStart, zEnd, n) {
-            for (var k = 0; k < n; k++) {
-                var f = n > 1 ? k / (n - 1) : 0;
-                var z = zStart + (zEnd - zStart) * f;
-                var r = Math.sqrt(Math.max(D - z, 0.01));
-                // Gigi depan dan tengah lebih panjang dan kokoh
-                var l = len * (0.82 + 0.38 * Math.sin(Math.PI * (0.12 + 0.76 * f)));
-                for (var s = -1; s <= 1; s += 2) {
-                    var x = s * a * r * Math.cos(th);
-                    var y = dirY * b * r * Math.sin(th) - dirY * 0.035;
-                    addTooth(x, y, z, l, rad, s);
-                }
-            }
-        }
-
-        var zA   = 0.28;            // mulai di depan muka
-        var zB   = D - 0.15;        // hingga hampir mendekati ujung moncong
-        var n    = Math.max(4, Math.round((zB - zA) / 0.16) + 1);
-        var half = (zB - zA) / (n - 1) * 0.5;
-
-        // Baris luar (taring utama, besar & panjang) + baris dalam (selang-seling)
-        addRow(0.28, isUpper ? 0.36 : 0.30, isUpper ? 0.060 : 0.052, zA,        zB,        n);
-        addRow(0.88, isUpper ? 0.22 : 0.18, isUpper ? 0.040 : 0.034, zA + half, zB - half, n - 1);
-
-        // Sepasang taring besar depan di ujung moncong rahang
-        var rf = Math.sqrt(0.10);
-        var fx = a * rf * 0.65;
-        var fy = dirY * b * rf - dirY * 0.035;
-        addTooth(-fx, fy, D - 0.10, isUpper ? 0.32 : 0.26, 0.058, -1);
-        addTooth( fx, fy, D - 0.10, isUpper ? 0.32 : 0.26, 0.058,  1);
-
-        return { hinge: hinge };
-    }
-
-    var jawUpper = buildJaw(true);
-    var jawLower = buildJaw(false);
-
-    // ══════════════════════════════════════════════════════════════
-    //  4. MATA (EYES) — Quadric: ELLIPSOID
-    // ══════════════════════════════════════════════════════════════
-    var eyeL = mkNode();
-    eyeL.setGeometry(generateEllipsoid(0.40, 0.44, 0.36, 24, 32, C.eye));
-    pos(eyeL, -0.54, 0.08, 0.70);
-    ry(eyeL, -0.22);
-
-    var eyeR = mkNode();
-    eyeR.setGeometry(generateEllipsoid(0.40, 0.44, 0.36, 24, 32, C.eye));
-    pos(eyeR, 0.54, 0.08, 0.70);
-    ry(eyeR, 0.22);
-
-    // ══════════════════════════════════════════════════════════════
-    //  Transisi mode: t = 0 (paruh bebek biasa) .. 1 (mode predator)
-    //  Semua pose dibangun ulang dari POSITION_MATRIX (identity dulu),
-    //  jadi urutan pos() lalu rx() sama persis seperti kode sebelumnya.
-    // ══════════════════════════════════════════════════════════════
-    function lerp(p, q, t) { return p + (q - p) * t; }
-
-    function setVisibleDeep(node, v) {
-        node.visible = v;
-        node.children.forEach(function (c) { setVisibleDeep(c, v); });
-    }
-
-    function setPredatorAmount(t) {
-        // ── Paruh lama mengorbit pusat kepala: naik/turun sambil ikut berputar ──
-        var OLD_BEAK_UP_ANGLE   =  0.50;   // rad, paruh atas berputar ke atas (~46°)
-        var OLD_BEAK_DOWN_ANGLE = -0.45;   // rad, paruh bawah berputar ke bawah (~26°)
-        var OLD_BEAK_SINK       =  0.10;   // seberapa dalam pangkal paruh terbenam ke kepala
-
-        // Pose awal (mode biasa), koordinat lokal kepala. Pusat kepala = (0, 0, 0)
-        var UP_Y0 = -0.22, UP_Z0 = 1.44;
-        var DN_Y0 = -0.36, DN_Z0 = 1.38;
-        var BEAK_TILT = -Math.PI * 0.48;   // orientasi paruh di mode biasa
-
-        // ang > 0 = berputar naik, ang < 0 = berputar turun
-        function orbitBeak(node, y0, z0, ang, sink) {
-            var c = Math.cos(ang), s = Math.sin(ang);
-            // Putar posisi paruh mengelilingi pusat kepala (bidang Y-Z)
-            var y =  y0 * c + z0 * s;
-            var z = -y0 * s + z0 * c;
-            // Tarik sedikit ke arah pusat supaya pangkal paruh terbenam, tidak melayang
-            var k = 1 - sink / Math.sqrt(y * y + z * z);
-
-            LIBS.set_I4(node.POSITION_MATRIX);
-            pos(node, 0, y * k, z * k);
-            rx(node, BEAK_TILT - ang);     // orientasi ikut berputar dengan sudut yang sama
-        }
-
-        orbitBeak(beakUpper, UP_Y0, UP_Z0, OLD_BEAK_UP_ANGLE   * t, OLD_BEAK_SINK * t);
-        orbitBeak(beakLower, DN_Y0, DN_Z0, OLD_BEAK_DOWN_ANGLE * t, OLD_BEAK_SINK * t);
-
-        // Engsel rahang predator membuka (panjang ~2.15 unit maju jauh ke depan)
-        LIBS.set_I4(jawUpper.hinge.POSITION_MATRIX);
-        pos(jawUpper.hinge, 0, -0.16, 0.75);
-        rx(jawUpper.hinge, -JAW_OPEN_UP * t);
-
-        LIBS.set_I4(jawLower.hinge.POSITION_MATRIX);
-        pos(jawLower.hinge, 0, -0.50, 0.75);
-        rx(jawLower.hinge, JAW_OPEN_DOWN * t);
-
-        // Paruh baru "muncul" begitu transisi dimulai
-        var show = t > 0.05;
-        setVisibleDeep(jawUpper.hinge, show);
-        setVisibleDeep(jawLower.hinge, show);
-        mouthInner.visible = show;
-    }
-    setPredatorAmount(0);   // state awal = mode 1
-
-    // ── Susun hierarki kepala (eyeL & eyeR dari kode lama tetap dipakai) ──
-    head.children.push(
-        beakUpper, beakLower,
-        jawUpper.hinge, jawLower.hinge,
-        mouthInner,
-        eyeL, eyeR
-    );
-
-    // ══════════════════════════════════════════════════════════════
-    //  6. SAYAP  — Quadric: ELLIPTIC PARABOLOID
-    //     Bentuk paraboloid pipih menyerupai sirip/sayap bebek kecil
-    //     seperti referensi gambar: melengkung cekung ke depan,
-    //     dibuka ke samping (rz ±π/2) lalu dimiringkan ke belakang-bawah.
-    //     generateEllipticParaboloid(a, b, rMax, rings, segs, color):
-    //       a  = lebar sayap (sumbu vertikal setelah rotasi)
-    //       b  = tinggi sayap (sumbu maju-mundur setelah rotasi)
-    //       rMax = seberapa besar/lebar sayap membuka
-    // ══════════════════════════════════════════════════════════════
-
-    // ── SAYAP KIRI ──
-    var wingL = mkNode();
-    // Paraboloid: base (rim lebar) menyentuh badan, tip lancip mengarah ke luar.
-    // rMax=0.75 → base rim ~0.56 unit dari tip.
-    // Node diposisikan di ujung luar (tip), base otomatis overlap ke badan.
-    wingL.setGeometry(generateEllipticParaboloid(0.32, 0.20, 0.75, 14, 28, C.arm));
-    pos(wingL, -1.46, 0.02, 0.00);   // tip di ujung kiri luar
-    rz(wingL, -Math.PI / 2);          // buka ke +X (menuju badan) → base ke badan, tip ke luar ✓
-    ry(wingL, -0.20);                  // sedikit miring ke belakang
-    rx(wingL,  0.12);                  // sedikit ke bawah
-
-    // ── SAYAP KANAN ──
-    var wingR = mkNode();
-    wingR.setGeometry(generateEllipticParaboloid(0.32, 0.20, 0.75, 14, 28, C.arm));
-    pos(wingR,  1.46, 0.02, 0.00);   // tip di ujung kanan luar
-    rz(wingR,  Math.PI / 2);          // buka ke -X (menuju badan) → base ke badan, tip ke luar ✓
-    ry(wingR,  0.20);
-    rx(wingR,  0.12);
-
-    // ══════════════════════════════════════════════════════════════
-    //  7. KAKI & TELAPAK — Quadric: CYLINDER + ELLIPSOID
-    // ══════════════════════════════════════════════════════════════
-    var legL = mkNode();
-    legL.setGeometry(generateCylinder(0.16, 0.75, 16, C.leg));
-    pos(legL, -0.34, -1.52, 0.05);
-
-    var footL = mkNode();
-    footL.setGeometry(generateEllipsoid(0.28, 0.08, 0.40, 10, 18, C.foot));
-    pos(footL, 0, -0.04, 0.16);
-
-    var toeL1 = mkNode();
-    toeL1.setGeometry(generateEllipsoid(0.09, 0.07, 0.24, 8, 12, C.toe));
-    pos(toeL1, -0.18, 0, 0.30);
-    ry(toeL1, -0.22);
-
-    var toeL2 = mkNode();
-    toeL2.setGeometry(generateEllipsoid(0.10, 0.07, 0.28, 8, 12, C.toe));
-    pos(toeL2, 0, 0, 0.35);
-
-    var toeL3 = mkNode();
-    toeL3.setGeometry(generateEllipsoid(0.09, 0.07, 0.24, 8, 12, C.toe));
-    pos(toeL3, 0.18, 0, 0.30);
-    ry(toeL3, 0.22);
-
-    footL.children.push(toeL1, toeL2, toeL3);
-    legL.children.push(footL);
-
-    var legR = mkNode();
-    legR.setGeometry(generateCylinder(0.16, 0.75, 16, C.leg));
-    pos(legR, 0.34, -1.52, 0.05);
-
-    var footR = mkNode();
-    footR.setGeometry(generateEllipsoid(0.28, 0.08, 0.40, 10, 18, C.foot));
-    pos(footR, 0, -0.04, 0.16);
-
-    var toeR1 = mkNode();
-    toeR1.setGeometry(generateEllipsoid(0.09, 0.07, 0.24, 8, 12, C.toe));
-    pos(toeR1, -0.18, 0, 0.30);
-    ry(toeR1, -0.22);
-
-    var toeR2 = mkNode();
-    toeR2.setGeometry(generateEllipsoid(0.10, 0.07, 0.28, 8, 12, C.toe));
-    pos(toeR2, 0, 0, 0.35);
-
-    var toeR3 = mkNode();
-    toeR3.setGeometry(generateEllipsoid(0.09, 0.07, 0.24, 8, 12, C.toe));
-    pos(toeR3, 0.18, 0, 0.30);
-    ry(toeR3, 0.22);
-
-    footR.children.push(toeR1, toeR2, toeR3);
-    legR.children.push(footR);
-
-    // ══════════════════════════════════════════════════════════════
-    //  8. EKOR & BADAN BELAKANG (TAIL) — SYARAT: KURVA 3D BEZIER
-    //     Dibuat BESAR, TEBAL, & MONTOK (menyelimuti seluruh pantat belakang badan)
-    //     sehingga tampak benar-benar menyatu dengan badan sebagai satu siluet utuh,
-    //     menggunakan 2 Kurva Bezier 3D (dorsal & ventral) sesuai sketsa & figurine.
-    // ══════════════════════════════════════════════════════════════
-    var tail = mkNode();
-    tail.setGeometry(generateBezierDuckTail(
-        // Kurva punggung atas (dorsal): dari punggung atas mengalir mulus ke belakang lalu menjentik ke atas
-        [
-            [0,  0.62, -0.62],  // P0: tertanam di punggung atas badan
-            [0,  0.40, -1.15],  // P1: melandai tebal mengikuti punggung
-            [0,  0.45, -1.48],  // P2: transisi lentur menyapu ke atas
-            [0,  0.62, -1.68]   // P3: puncak ekor menjentik runcing anggun
-        ],
-        // Kurva bawah pantat (ventral): dari panggul bawah tepat di belakang kaki menyapu naik tebal
-        [
-            [0, -0.84, -0.42],  // Q0: tertanam di dasar panggul belakang kaki
-            [0, -0.75, -1.05],  // Q1: pantat bawah montok tebal
-            [0, -0.20, -1.48],  // Q2: melengkung naik dengan tebal
-            [0,  0.54, -1.68]   // Q3: bertemu di ujung ekor menjentik runcing
-        ],
-        0.94,   // baseWidth (lebar montok 0.94 membungkus penuh kontur samping badan)
-        0.08,   // tipWidth  (ujung ekor menjentik runcing rapi sesuai sketsa user & figurine)
-        32,     // segments
-        28,     // slices
-        C.tail
-    ));
-    pos(tail, 0, 0, 0);
-
-    // ══════════════════════════════════════════════════════════════
-    //  RAKIT SELURUH HIERARKI
-    // ══════════════════════════════════════════════════════════════
-    body.children.push(belly, head, wingL, wingR, legL, legR, tail);
-
+/* main.js - Karakter Apex Predator (R.E.P.O.) dengan WebGL: ellipsoid + paraboloid + cone + cylinder + kurva Bezier 3D
+   Gaya kode SAMA dengan Elsa: mesh dibuat sekali, lalu digambar lewat draw(mesh, M, color) dengan chain(...) transformasi.
+   Bentuk model (generator geometri, ukuran, posisi, pose, animasi, transisi mode monster) tidak diubah dari versi SceneNode.
+   Tidak butuh LIBS / SceneNode lagi. Memakai Mat4 milik Elsa bila ada (kalau tidak ada, dipakai versi kecil di file ini). */
+(function () {
+  'use strict';
+  const PI = Math.PI;
+  let gl = null, M4 = null, T, S, rotX, rotY, rotZ, chain;
+
+  /* ---- Mat4: pakai milik proyek bila sudah dimuat, kalau belum pakai cadangan (kolom-mayor, sama konvensinya) ---- */
+  function makeMat4() {
+    const id = () => new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    const mul = (a, b) => { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s } return o };
+    const nz = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l] };
+    const cr = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
     return {
-        root              : body,
-        head              : head,
-        beakUpper         : beakUpper,
-        beakLower         : beakLower,
-        jawUpper          : jawUpper.hinge,
-        jawLower          : jawLower.hinge,
-        mouthInner        : mouthInner,
-        setPredatorAmount : setPredatorAmount,
-        wingL             : wingL,
-        wingR             : wingR,
-        legL              : legL,
-        legR              : legR,
-        footL             : footL,
-        footR             : footR,
-        tail              : tail
+      identity: id, mul, chain: (...m) => m.reduce(mul),
+      translation: (x, y, z) => { const m = id(); m[12] = x; m[13] = y; m[14] = z; return m },
+      scaling: (x, y, z) => { const m = id(); m[0] = x; m[5] = y; m[10] = z; return m },
+      rotX: a => { const m = id(), c = Math.cos(a), s = Math.sin(a); m[5] = c; m[6] = s; m[9] = -s; m[10] = c; return m },
+      rotY: a => { const m = id(), c = Math.cos(a), s = Math.sin(a); m[0] = c; m[2] = -s; m[8] = s; m[10] = c; return m },
+      rotZ: a => { const m = id(), c = Math.cos(a), s = Math.sin(a); m[0] = c; m[1] = s; m[4] = -s; m[5] = c; return m },
+      perspective: (f, a, n, r) => { const t = 1 / Math.tan(f / 2), m = new Float32Array(16); m[0] = t / a; m[5] = t; m[10] = (r + n) / (n - r); m[11] = -1; m[14] = 2 * r * n / (n - r); return m },
+      lookAt: (e, c, up) => {
+        const f = nz([c[0] - e[0], c[1] - e[1], c[2] - e[2]]), s = nz(cr(f, up)), u = cr(s, f), m = id();
+        m[0] = s[0]; m[4] = s[1]; m[8] = s[2]; m[1] = u[0]; m[5] = u[1]; m[9] = u[2]; m[2] = -f[0]; m[6] = -f[1]; m[10] = -f[2];
+        m[12] = -(s[0] * e[0] + s[1] * e[1] + s[2] * e[2]); m[13] = -(u[0] * e[0] + u[1] * e[1] + u[2] * e[2]); m[14] = f[0] * e[0] + f[1] * e[1] + f[2] * e[2];
+        return m;
+      }
     };
-}
+  }
+  function useMat4() {
+    if (M4) return;
+    M4 = typeof Mat4 !== 'undefined' ? Mat4 : makeMat4();
+    ({ translation: T, scaling: S, rotX, rotY, rotZ, chain } = M4);
+  }
+  // rotasi mengelilingi sumbu sembarang (Rodrigues; sumbu dinormalisasi, radian, kolom-mayor)
+  const rotAxis = (x, y, z, a) => {
+    const l = Math.hypot(x, y, z) || 1; x /= l; y /= l; z /= l;
+    const c = Math.cos(a), s = Math.sin(a), k = 1 - c;
+    return new Float32Array([c + x * x * k, y * x * k + z * s, z * x * k - y * s, 0, x * y * k - z * s, c + y * y * k, z * y * k + x * s, 0,
+                             x * z * k + y * s, y * z * k - x * s, c + z * z * k, 0, 0, 0, 0, 1]);
+  };
+  // pivot transform (sama dengan LIBS.makePivotTransform / ...Axis): putar & skala di titik engsel (px,py,pz), lalu geser (tx,ty,tz)
+  const pivot = (px, py, pz, rx, ry, rz, sx, sy, sz, tx, ty, tz) =>
+    chain(T(tx, ty, tz), T(px, py, pz), rotZ(rz), rotY(ry), rotX(rx), S(sx, sy, sz), T(-px, -py, -pz));
+  const pivotAxis = (px, py, pz, ax, ay, az, ang, sx, sy, sz, tx, ty, tz) =>
+    chain(T(tx, ty, tz), T(px, py, pz), rotAxis(ax, ay, az, ang), S(sx, sy, sz), T(-px, -py, -pz));
 
+  /* ================= GEOMETRI (rumus asli): {positions, normals, indices} datar ================= */
+  const unitN = n => {
+    for (let k = 0; k < n.length; k += 3) {
+      const l = Math.hypot(n[k], n[k + 1], n[k + 2]);
+      if (l > 1e-6) { n[k] /= l; n[k + 1] /= l; n[k + 2] /= l } else { n[k] = 0; n[k + 1] = 1; n[k + 2] = 0 }
+    }
+    return n;
+  };
+  const gridIdx = (rows, cols) => {
+    const i = [];
+    for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols - 1; c++) { const a0 = r * cols + c, a1 = a0 + 1, b0 = a0 + cols, b1 = b0 + 1; i.push(a0, a1, b1, a0, b1, b0) }
+    return i;
+  };
+  const bezier = (P, t) => {   // Bezier kubik 3D
+    const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+    return [0, 1, 2].map(k => a * P[0][k] + b * P[1][k] + c * P[2][k] + d * P[3][k]);
+  };
 
+  // ELLIPSOID (badan, kepala, mata, telapak, jari); taperTop/taperBottom = bentuk organik
+  function generateEllipsoid(a, b, c, stacks, slices, taperTop = 0, taperBottom = 0) {
+    const p = [], n = [];
+    for (let i = 0; i <= stacks; i++) {
+      const u = i / stacks * PI - PI / 2, cosU = Math.cos(u), sinU = Math.sin(u);
+      const k = sinU > 0 && taperTop !== 0 ? 1 - taperTop * sinU : sinU < 0 && taperBottom !== 0 ? 1 - taperBottom * -sinU : 1;
+      for (let j = 0; j <= slices; j++) {
+        const v = j / slices * 2 * PI - PI, cosV = Math.cos(v), sinV = Math.sin(v), ea = a * k, ec = c * k;
+        p.push(ea * cosV * cosU, b * sinU, ec * sinV * cosU);
+        n.push(cosV * cosU / Math.max(ea, 1e-4), sinU / b, sinV * cosU / Math.max(ec, 1e-4));
+      }
+    }
+    return { positions: p, normals: unitN(n), indices: gridIdx(stacks + 1, slices + 1) };
+  }
 
-// =========================================================================
+  // ELLIPTIC PARABOLOID (paruh, rahang, sayap): x = r cos a, y = r^2, z = r sin b, ujung (r = 0) di titik asal
+  function generateEllipticParaboloid(a, b, rMax, rings, segments) {
+    const p = [], n = [];
+    for (let i = 0; i <= rings; i++) {
+      const r = i / rings * rMax;
+      for (let j = 0; j <= segments; j++) {
+        const th = j / segments * 2 * PI, c = Math.cos(th), s = Math.sin(th);
+        p.push(r * c * a, r * r, r * s * b);
+        if (r < 1e-5) n.push(0, -1, 0); else n.push(2 * c / a, -2 * r, 2 * s / b);
+      }
+    }
+    const idx = gridIdx(rings + 1, segments + 1), ci = p.length / 3, last = rings * (segments + 1);
+    p.push(0, rMax * rMax, 0); n.push(0, 1, 0);   // penutup pangkal
+    for (let j = 0; j < segments; j++) idx.push(ci, last + j, last + j + 1);
+    return { positions: p, normals: unitN(n), indices: idx };
+  }
 
-// 4. MAIN WEBGL APPLICATION & INTERACTIVE VIEWER
+  // CONE (taring): pangkal di y = 0, puncak di y = height
+  function generateCone(radius, height, segments) {
+    const p = [0, height, 0, 0, 0, 0], n = [0, 1, 0, 0, -1, 0], idx = [], slope = radius / Math.max(height, 1e-4);
+    for (let j = 0; j <= segments; j++) { const th = j / segments * 2 * PI, c = Math.cos(th), s = Math.sin(th); p.push(radius * c, 0, radius * s); n.push(c, slope, s) }
+    for (let j = 0; j < segments; j++) idx.push(0, 2 + j, 3 + j, 1, 3 + j, 2 + j);
+    return { positions: p, normals: unitN(n), indices: idx };
+  }
 
-// =========================================================================
+  // CYLINDER (kaki): y = 0 sampai y = height
+  function generateCylinder(radius, height, segments) {
+    const p = [0, 0, 0], n = [0, -1, 0], idx = [], bot = 1, topC = segments + 2, top = topC + 1;
+    for (let j = 0; j <= segments; j++) { const th = j / segments * 2 * PI, c = Math.cos(th), s = Math.sin(th); p.push(radius * c, 0, radius * s); n.push(c, 0, s) }
+    p.push(0, height, 0); n.push(0, 1, 0);
+    for (let j = 0; j <= segments; j++) { const th = j / segments * 2 * PI, c = Math.cos(th), s = Math.sin(th); p.push(radius * c, height, radius * s); n.push(c, 0, s) }
+    for (let j = 0; j < segments; j++) idx.push(0, bot + j + 1, bot + j, topC, top + j, top + j + 1, bot + j, bot + j + 1, top + j + 1, bot + j, top + j + 1, top + j);
+    return { positions: p, normals: unitN(n), indices: idx };
+  }
 
-/**
- * main.js  –  Apex Predator Model Viewer
- * Kontrol:
- *   Mouse drag  → orbit kamera
- *   Scroll      → zoom
- *   Space       → toggle taring
- */
+  // normal halus dari selisih tetangga grid; flip = arah normal dibalik (dipakai kepala, seperti kode asli)
+  function gridMesh(grid, flip) {
+    const R = grid.length - 1, C = grid[0].length - 1, p = [], n = [];
+    for (let i = 0; i <= R; i++) for (let j = 0; j <= C; j++) {
+      const a = grid[Math.max(0, i - 1)][j], b = grid[Math.min(R, i + 1)][j], c = grid[i][(j - 1 + C) % C], d = grid[i][(j + 1) % C];
+      const du = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], dv = [d[0] - c[0], d[1] - c[1], d[2] - c[2]], f = flip ? -1 : 1;
+      p.push(...grid[i][j]);
+      n.push(f * (du[1] * dv[2] - du[2] * dv[1]), f * (du[2] * dv[0] - du[0] * dv[2]), f * (du[0] * dv[1] - du[1] * dv[0]));
+    }
+    return { positions: p, normals: n, indices: gridIdx(R + 1, C + 1) };
+  }
 
-function main() {
-    /** @type {HTMLCanvasElement} */
-    var CANVAS = document.getElementById('mycanvas');
-    CANVAS.width  = window.innerWidth;
-    CANVAS.height = window.innerHeight;
-
-    window.addEventListener('resize', function () {
-        CANVAS.width  = window.innerWidth;
-        CANVAS.height = window.innerHeight;
-        PROJMATRIX = LIBS.get_projection(45, CANVAS.width / CANVAS.height, 0.1, 100);
-        GL.viewport(0, 0, CANVAS.width, CANVAS.height);
-    });
-
-    /** @type {WebGLRenderingContext} */
-    var GL;
-    try {
-        GL = CANVAS.getContext('webgl', { antialias: true });
-    } catch (e) { alert('WebGL error'); return; }
-    if (!GL) { alert('WebGL tidak didukung'); return; }
-
-    // ─── SHADERS ───
-    var vsSource = `
-        attribute vec3 position;
-        attribute vec3 color;
-        uniform mat4 Pmatrix, Vmatrix, Mmatrix;
-        varying vec3 vColor;
-        void main(void) {
-            gl_Position = Pmatrix * Vmatrix * Mmatrix * vec4(position, 1.0);
-            vColor = color;
+  // KEPALA: ellipsoid, bagian belakang (cosT < 0) ditarik jadi punuk lewat Bezier kubik 1D
+  function generateDuckHeadWithBezierBack(a, b, c, stacks, slices, backBump, bumpY) {
+    const grid = [];
+    for (let i = 0; i <= stacks; i++) {
+      const phi = i / stacks * PI - PI / 2, sinPhi = Math.sin(phi), cosPhi = Math.cos(phi), row = [];
+      for (let j = 0; j <= slices; j++) {
+        const th = j / slices * 2 * PI - PI, cosT = Math.cos(th), sinT = Math.sin(th);
+        let x = a * sinT * cosPhi, y = b * sinPhi, z = c * cosT * cosPhi;
+        if (cosT < 0) {
+          const t = -cosT, mt = 1 - t, bumpFactor = 3 * mt * mt * t * .20 + 3 * mt * t * t * .85 + t * t * t;
+          const vertMask = Math.pow(Math.max(0, 1 - Math.abs(sinPhi) * 1.4), .55);
+          z -= backBump * bumpFactor * vertMask; y += bumpY * bumpFactor * vertMask;
         }
-    `;
-    var fsSource = `
-        precision mediump float;
-        varying vec3 vColor;
-        void main(void) {
-            gl_FragColor = vec4(vColor, 1.0);
-        }
-    `;
+        row.push([x, y, z]);
+      }
+      grid.push(row);
+    }
+    const g = gridMesh(grid, true); unitN(g.normals); return g;
+  }
 
-    function compileShader(src, type) {
-        var sh = GL.createShader(type);
-        GL.shaderSource(sh, src);
-        GL.compileShader(sh);
-        if (!GL.getShaderParameter(sh, GL.COMPILE_STATUS)) {
-            alert('Shader error: ' + GL.getShaderInfoLog(sh)); return null;
-        }
-        return sh;
+  // EKOR: dua kurva Bezier 3D (dorsal & ventral) disapu jadi ekor bebek bervolume + penutup pangkal & ujung
+  function generateBezierDuckTail(Top, Bot, baseWidth, tipWidth, segments, slices) {
+    const grid = [];
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments, pt = bezier(Top, t), pb = bezier(Bot, t), row = [];
+      const mx = (pt[0] + pb[0]) / 2, my = (pt[1] + pb[1]) / 2, mz = (pt[2] + pb[2]) / 2;
+      const hy = (pt[1] - pb[1]) / 2, hz = (pt[2] - pb[2]) / 2, w = baseWidth * Math.pow(1 - t, .55) + tipWidth * t;
+      for (let j = 0; j <= slices; j++) { const th = j / slices * 2 * PI, c = Math.cos(th), s = Math.sin(th); row.push([mx + w * c, my + hy * s, mz + hz * s]) }
+      grid.push(row);
+    }
+    const g = gridMesh(grid, false);
+    const cap = (c, nrm, ring0, rev) => {
+      const ci = g.positions.length / 3; g.positions.push(...c); g.normals.push(...nrm);
+      for (let j = 0; j < slices; j++) g.indices.push(ci, ring0 + (rev ? j + 1 : j), ring0 + (rev ? j : j + 1));
+    };
+    cap([(Top[0][0] + Bot[0][0]) / 2, (Top[0][1] + Bot[0][1]) / 2, (Top[0][2] + Bot[0][2]) / 2], [0, 0, 1], 0, true);
+    cap([(Top[3][0] + Bot[3][0]) / 2, (Top[3][1] + Bot[3][1]) / 2, (Top[3][2] + Bot[3][2]) / 2 - .02], [0, .55, -.83], segments * (slices + 1), false);
+    unitN(g.normals); return g;
+  }
+
+  // tempatkan sebuah geometri dengan matriks m (kolom-mayor) dan gabungkan beberapa jadi satu (taring per rahang = 1 mesh)
+  const place = (g, m) => {
+    const p = [], n = [];
+    for (let k = 0; k < g.positions.length; k += 3) {
+      const x = g.positions[k], y = g.positions[k + 1], z = g.positions[k + 2], a = g.normals[k], b = g.normals[k + 1], c = g.normals[k + 2];
+      p.push(m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]);
+      n.push(m[0] * a + m[4] * b + m[8] * c, m[1] * a + m[5] * b + m[9] * c, m[2] * a + m[6] * b + m[10] * c);
+    }
+    return { positions: p, normals: n, indices: g.indices };
+  };
+  const merge = list => {
+    const p = [], n = [], idx = [];
+    for (const g of list) { const o = p.length / 3; g.positions.forEach(x => p.push(x)); g.normals.forEach(x => n.push(x)); g.indices.forEach(i => idx.push(i + o)) }
+    return { positions: p, normals: n, indices: idx };
+  };
+
+  /* ================= SHADER =================
+     Pencahayaan = persis yang dulu "dipanggang" ke warna vertex (ambient .64 + diffuse .36 + fill), dihitung di ruang lokal mesh.
+     uTint dipakai adegan untuk meredupkan sesuai lampu lorong (standalone: putih). */
+  const VS = `
+    attribute vec3 aPos; attribute vec3 aNorm;
+    uniform mat4 uModel, uViewProj;
+    varying vec3 vN;
+    void main(){ vN = aNorm; gl_Position = uViewProj * uModel * vec4(aPos, 1.0); }`;
+  const FS = `
+    precision mediump float;
+    varying vec3 vN;
+    uniform vec3 uColor, uTint;
+    void main(){
+      vec3 n = normalize(vN), L = normalize(vec3(0.45, 0.75, 0.50));
+      float diff = max(dot(n, L), 0.0);
+      float fill = max(0.0, -n.x * 0.25 - n.y * 0.35 - n.z * 0.45) * 0.18;
+      gl_FragColor = vec4(min(uColor * (0.64 + 0.36 * diff + fill), vec3(1.0)) * uTint, 1.0);
+    }`;
+  function makeProgram() {
+    const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(o)); return o };
+    const p = gl.createProgram();
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(p);
+    return p;
+  }
+  function makeMesh(g) {
+    const m = { pos: gl.createBuffer(), nrm: gl.createBuffer(), idx: gl.createBuffer(), count: g.indices.length };
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.pos); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(g.positions), gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.nrm); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(g.normals), gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.idx); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(g.indices), gl.STATIC_DRAW);
+    return m;
+  }
+
+  /* ================= MESH & WARNA ================= */
+  const C = {
+    body: [0.98, 0.82, 0.12], belly: [1.00, 0.88, 0.24], crest: [0.98, 0.80, 0.10], eye: [0.02, 0.02, 0.02],
+    beak: [0.96, 0.78, 0.50], jaw: [0.80, 0.16, 0.24], mouth: [0.45, 0.12, 0.12], fang: [0.98, 0.98, 0.90],
+    arm: [0.98, 0.82, 0.12], leg: [0.94, 0.58, 0.12], foot: [0.94, 0.60, 0.14], toe: [0.92, 0.56, 0.12], tail: [0.98, 0.82, 0.12]
+  };
+  const JAW_OPEN_UP = 0.30, JAW_OPEN_DOWN = 0.40;          // rad, bukaan rahang predator
+  const D_UP = 2.15, D_DOWN = 1.98;                        // panjang rahang atas / bawah (ke depan, +Z)
+
+  // rahang buaya: cangkang paraboloid panjang + deretan taring kerucut (sudah digabung jadi 1 mesh)
+  function buildJaw(isUpper) {
+    const D = isUpper ? D_UP : D_DOWN, rMax = Math.sqrt(D), a = (isUpper ? 0.62 : 0.54) / rMax, b = (isUpper ? 0.30 : 0.22) / rMax, dirY = isUpper ? -1 : 1;
+    const teeth = [];
+    const addTooth = (x, y, z, len, rad, side) => {
+      const m = isUpper ? chain(T(x, y, z), rotX(PI), rotZ(side * 0.12)) : chain(T(x, y, z), rotZ(-side * 0.12));   // atas: ujung ke bawah
+      teeth.push(place(generateCone(rad, len, 8), m));
+    };
+    const addRow = (th, len, rad, zStart, zEnd, n) => {
+      for (let k = 0; k < n; k++) {
+        const f = n > 1 ? k / (n - 1) : 0, z = zStart + (zEnd - zStart) * f, r = Math.sqrt(Math.max(D - z, 0.01));
+        const l = len * (0.82 + 0.38 * Math.sin(PI * (0.12 + 0.76 * f)));
+        for (let s = -1; s <= 1; s += 2) addTooth(s * a * r * Math.cos(th), dirY * b * r * Math.sin(th) - dirY * 0.035, z, l, rad, s);
+      }
+    };
+    const zA = 0.28, zB = D - 0.15, n = Math.max(4, Math.round((zB - zA) / 0.16) + 1), half = (zB - zA) / (n - 1) * 0.5;
+    addRow(0.28, isUpper ? 0.36 : 0.30, isUpper ? 0.060 : 0.052, zA, zB, n);
+    addRow(0.88, isUpper ? 0.22 : 0.18, isUpper ? 0.040 : 0.034, zA + half, zB - half, n - 1);
+    const rf = Math.sqrt(0.10), fx = a * rf * 0.65, fy = dirY * b * rf - dirY * 0.035;
+    addTooth(-fx, fy, D - 0.10, isUpper ? 0.32 : 0.26, 0.058, -1);
+    addTooth(fx, fy, D - 0.10, isUpper ? 0.32 : 0.26, 0.058, 1);
+    return { shell: makeMesh(generateEllipticParaboloid(a, b, rMax, 24, 40)), teeth: makeMesh(merge(teeth)) };
+  }
+
+  let prog, aPos, aNorm, uModel, uVP, uColor, uTint, G;
+  function initApex(_gl) {
+    if (prog) return;
+    gl = _gl; useMat4();
+    prog = makeProgram();
+    aPos = gl.getAttribLocation(prog, 'aPos'); aNorm = gl.getAttribLocation(prog, 'aNorm');
+    uModel = gl.getUniformLocation(prog, 'uModel'); uVP = gl.getUniformLocation(prog, 'uViewProj');
+    uColor = gl.getUniformLocation(prog, 'uColor'); uTint = gl.getUniformLocation(prog, 'uTint');
+    G = {
+      body: makeMesh(generateEllipsoid(0.96, 1.04, 0.90, 28, 40, 0.16, -0.10)),
+      belly: makeMesh(generateEllipsoid(0.74, 0.80, 0.52, 22, 32)),
+      head: makeMesh(generateDuckHeadWithBezierBack(1.05, 1.02, 1.00, 32, 44, 0.38, 0.10)),
+      beakUpper: makeMesh(generateEllipticParaboloid(0.72, 0.22, 0.76, 16, 32)),
+      beakLower: makeMesh(generateEllipticParaboloid(0.62, 0.16, 0.76, 14, 28)),
+      mouth: makeMesh(generateEllipsoid(0.46, 0.36, 0.14, 16, 24)),
+      jawUpper: buildJaw(true), jawLower: buildJaw(false),
+      eye: makeMesh(generateEllipsoid(0.40, 0.44, 0.36, 24, 32)),
+      wing: makeMesh(generateEllipticParaboloid(0.32, 0.20, 0.75, 14, 28)),
+      leg: makeMesh(generateCylinder(0.16, 0.75, 16)),
+      foot: makeMesh(generateEllipsoid(0.28, 0.08, 0.40, 10, 18)),
+      toeSide: makeMesh(generateEllipsoid(0.09, 0.07, 0.24, 8, 12)),
+      toeMid: makeMesh(generateEllipsoid(0.10, 0.07, 0.28, 8, 12)),
+      tail: makeMesh(generateBezierDuckTail(
+        [[0, 0.62, -0.62], [0, 0.40, -1.15], [0, 0.45, -1.48], [0, 0.62, -1.68]],      // kurva punggung (dorsal)
+        [[0, -0.84, -0.42], [0, -0.75, -1.05], [0, -0.20, -1.48], [0, 0.54, -1.68]],   // kurva bawah pantat (ventral)
+        0.94, 0.08, 32, 28))
+    };
+  }
+
+  function draw(mesh, M, color) {
+    gl.uniformMatrix4fv(uModel, false, M);
+    gl.uniform3fv(uColor, color);
+    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.pos); gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.nrm); gl.vertexAttribPointer(aNorm, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.idx);
+    gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
+  }
+
+  /* ================= GAMBAR + ANIMASI =================
+     root = matriks induk. p: tau (fase langkah), wb (bobot jalan 0..1), g (penguat langkah), pred (0 = paruh bebek, 1 = monster),
+     roar / atk (0..1, dipakai adegan), lean (condong maju), life (napas saat diam, 0 = mati), t (waktu). */
+  function renderApexBody(root, p) {
+    const { tau, wb, g, pred, roar, atk, lean, life, t } = p;
+    const a = wb * g, sn = Math.sin(tau), cs = Math.cos(tau), show = pred > 0.05;
+
+    // BADAN: bobbing, goyang panggul (waddle), pelvis twist; skala tetap 1
+    const bobY = -0.045 * Math.cos(2 * tau) * a + 0.012 * Math.sin(2 * t) * (1 - wb) * life;
+    const waddleZ = 0.055 * sn * a, twistY = 0.030 * cs * wb;
+    const body = chain(root, T(0, 0.15, 0), pivot(0, 0, 0, lean + 0.30 * atk, twistY, waddleZ, 1, 1, 1, 0.018 * roar * Math.sin(45 * t), bobY, 0));
+    draw(G.body, body, C.body);
+    draw(G.belly, chain(body, T(0, -0.15, 0.44)), C.belly);
+
+    // KEPALA: pivot di leher; mengangguk, head bobbing, menengadah saat meraung
+    const headBobZ = 0.045 * (1 - Math.cos(2 * tau)) * a, headNodX = 0.050 * Math.sin(2 * tau) * a - 0.35 * roar + 0.45 * atk;
+    const head = chain(body, T(0, 1.42, 0), pivot(0, -0.5, 0, headNodX, 0, -0.45 * waddleZ, 1, 1, 1, 0, 0, headBobZ));
+    draw(G.head, head, C.body);
+    draw(G.eye, chain(head, T(-0.54, 0.08, 0.70), rotY(-0.22)), C.eye);
+    draw(G.eye, chain(head, T(0.54, 0.08, 0.70), rotY(0.22)), C.eye);
+
+    // PARUH BEBEK (mode biasa): mengorbit pusat kepala naik/turun dan membenam saat pred 0 -> 1
+    const BEAK_TILT = -PI * 0.48;
+    const orbit = (y0, z0, ang, sink) => {
+      const c = Math.cos(ang), s = Math.sin(ang), y = y0 * c + z0 * s, z = -y0 * s + z0 * c, k = 1 - sink / Math.hypot(y, z);
+      return chain(T(0, y * k, z * k), rotX(BEAK_TILT - ang));
+    };
+    draw(G.beakUpper, chain(head, orbit(-0.22, 1.44, 0.50 * pred, 0.10 * pred)), C.beak);
+    draw(G.beakLower, chain(head, orbit(-0.36, 1.38, -0.45 * pred, 0.10 * pred)), C.beak);
+
+    // RAHANG PREDATOR (mode monster): engsel di sudut mulut, membuka sesuai pred (+ menganga saat meraung)
+    if (show) {
+      const up = chain(head, T(0, -0.16, 0.75), rotX(-(JAW_OPEN_UP * pred + 0.30 * roar * pred)));
+      const dn = chain(head, T(0, -0.50, 0.75), rotX(JAW_OPEN_DOWN * pred + 0.25 * roar * pred));
+      draw(G.jawUpper.shell, chain(up, T(0, 0, D_UP), rotX(-PI / 2)), C.jaw);     // sumbu paraboloid (+y) -> -z, ujung di depan
+      draw(G.jawUpper.teeth, up, C.fang);
+      draw(G.jawLower.shell, chain(dn, T(0, 0, D_DOWN), rotX(-PI / 2)), C.jaw);
+      draw(G.jawLower.teeth, dn, C.fang);
+      draw(G.mouth, chain(head, T(0, -0.33, 0.90)), C.mouth);
     }
 
-    var PROG = GL.createProgram();
-    GL.attachShader(PROG, compileShader(vsSource, GL.VERTEX_SHADER));
-    GL.attachShader(PROG, compileShader(fsSource, GL.FRAGMENT_SHADER));
-    GL.linkProgram(PROG);
-    GL.useProgram(PROG);
+    // SAYAP: paraboloid, rotasi sumbu sembarang (±0.75, 0.30, 0.58) dengan pivot di dasar rim (0, 0.5625, 0)
+    const wingFlap = 0.26 * cs * a;
+    draw(G.wing, chain(body, T(-1.46, 0.02, 0), rotZ(-PI / 2), rotY(-0.20), rotX(0.12),
+                       pivotAxis(0, 0.5625, 0, 0.75, 0.30, 0.58, wingFlap + 0.55 * roar - 0.8 * atk, 1, 1, 1, 0, 0, 0)), C.arm);
+    draw(G.wing, chain(body, T(1.46, 0.02, 0), rotZ(PI / 2), rotY(0.20), rotX(0.12),
+                       pivotAxis(0, 0.5625, 0, -0.75, 0.30, 0.58, -wingFlap - 0.55 * roar + 0.8 * atk, 1, 1, 1, 0, 0, 0)), C.arm);
 
-    var _pos  = GL.getAttribLocation(PROG, 'position');
-    var _col  = GL.getAttribLocation(PROG, 'color');
-    var _Pmat = GL.getUniformLocation(PROG, 'Pmatrix');
-    var _Vmat = GL.getUniformLocation(PROG, 'Vmatrix');
-    var _Mmat = GL.getUniformLocation(PROG, 'Mmatrix');
+    // EKOR (kurva Bezier 3D): rotasi sumbu sembarang (0.35, 1, 0.40), pivot di pangkal kurva
+    draw(G.tail, chain(body, pivotAxis(0, -0.11, -0.52, 0.35, 1.0, 0.40, 0.22 * sn * a + 0.12 * Math.sin(9 * t) * roar, 1, 1, 1, 0, 0, 0)), C.tail);
 
-    GL.enableVertexAttribArray(_pos);
-    GL.enableVertexAttribArray(_col);
-
-    // ─── MODEL ───
-    var model = buildApexPredator(GL, PROG, _pos, _col, _Mmat);
-    var root  = model.root;
-    root.setup();
-
-    // ─── KAMERA ORBIT ───
-    var THETA    = -0.65;     // rotasi Y (sudut 3/4 depan-kiri memperlihatkan wajah, sayap ber-3 jari, & ekor)
-    var PHI      = -0.06;     // rotasi X
-    var CAM_DIST =  7.0;
-    var FRICTION =  0.88;
-    var dTheta   = 0, dPhi = 0;
-    // Target kamera sedikit ke atas (badan dinaikkan 0.2)
-    var CAM_TARGET_Y = 0.5;
-    var PROJMATRIX = LIBS.get_projection(42, CANVAS.width / CANVAS.height, 0.1, 100);
-
-    function normalize(v) {
-        var l = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-        return l < 1e-8 ? [0,1,0] : [v[0]/l, v[1]/l, v[2]/l];
+    // KAKI (pivot di pinggul) + TELAPAK & JARI (scaling: gepeng & melebar saat menapak)
+    const swing = 0.36 * sn * a, splay = 0.02 * sn * wb;
+    const contactL = Math.max(0, -sn) * wb, contactR = Math.max(0, sn) * wb;
+    const squashL = 1 - 0.45 * contactL, spreadL = 1 + 0.25 * contactL, squashR = 1 - 0.45 * contactR, spreadR = 1 + 0.25 * contactR;
+    // [x, ayun kaki, splay, ayun ankle, squash Y, melebar XZ] untuk kiri lalu kanan (kanan berlawanan fase)
+    for (const [x, sw, sp, ank, sq, spr] of [[-0.34, swing, -splay, -0.55 * swing, squashL, spreadL], [0.34, -swing, splay, 0.55 * swing, squashR, spreadR]]) {
+      const leg = chain(body, T(x, -1.52, 0.05), pivot(0, 0.75, 0, sw, 0, sp, 1, 1, 1, 0, 0, 0));
+      draw(G.leg, leg, C.leg);
+      const foot = chain(leg, T(0, -0.04, 0.16), pivot(0, -0.08, 0, ank, 0, 0, spr, sq, spr, 0, 0, 0));
+      draw(G.foot, foot, C.foot);
+      draw(G.toeSide, chain(foot, T(-0.18, 0, 0.30), rotY(-0.22)), C.toe);
+      draw(G.toeMid, chain(foot, T(0, 0, 0.35)), C.toe);
+      draw(G.toeSide, chain(foot, T(0.18, 0, 0.30), rotY(0.22)), C.toe);
     }
-    function cross(a, b) {
-        return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
-    }
-    function buildViewMatrix() {
-        var camX = CAM_DIST * Math.sin(THETA) * Math.cos(PHI);
-        var camY = CAM_DIST * Math.sin(PHI) + CAM_TARGET_Y;
-        var camZ = CAM_DIST * Math.cos(THETA) * Math.cos(PHI);
-        // Look toward target (0, CAM_TARGET_Y, 0)
-        var fwd   = normalize([-camX, CAM_TARGET_Y - camY, -camZ]);
-        var right = normalize(cross(fwd, [0,1,0]));
-        var up    = cross(right, fwd);
-        var vm = [
-            right[0],    right[1],    right[2],    0,
-            up[0],       up[1],       up[2],       0,
-           -fwd[0],     -fwd[1],     -fwd[2],      0,
-            0,           0,           0,            1
-        ];
-        vm[12] = -(right[0]*camX + right[1]*camY + right[2]*camZ);
-        vm[13] = -(up[0]*camX    + up[1]*camY    + up[2]*camZ);
-        vm[14] =   fwd[0]*camX   + fwd[1]*camY   + fwd[2]*camZ;
-        return vm;
-    }
+    return { footSquash: Math.min(squashL, squashR), footSpread: Math.max(spreadL, spreadR) };
+  }
 
-    // ─── MOUSE ───
-    var drag = false, xPrev = 0, yPrev = 0;
-    CANVAS.addEventListener('mousedown', function(e) {
-        drag=true; xPrev=e.clientX; yPrev=e.clientY;
+  /* ================= EXPORT UNTUK MASTER SCENE =================
+     drawApex(gfx, root, pose, t, o)   pose: 'idle' | 'roar' | 'run' | 'swat'
+       o.ph fase langkah (rad)  o.k amplitudo jalan 0..1  o.run langkah lebih besar  o.pred 0..1 mode monster
+       o.roar / o.atk 0..1  o.lit kecerahan lorong 0..1 (opsional, meredupkan saat lampu padam)
+     root = posisi + yaw + skala dari scene (menghadap +Z, lantai y = 0). Mengembalikan false bila belum bisa menggambar. */
+  const S0 = 0.365, GROUND = 1.49;   // model ±4.1 satuan -> tinggi 1.5 di adegan; telapak kaki model di y = -1.49
+  window.drawApex = function (gfx, root, pose, t, o) {
+    const _gl = window.gl || (gfx && gfx.gl);
+    if (!_gl || !window.getV || !window.getPr) return false;
+    initApex(_gl); o = o || {};
+    const sm = (a, b, x) => { const k = Math.min(1, Math.max(0, (x - a) / (b - a))); return k * k * (3 - 2 * k) };
+    const pred = o.pred !== undefined ? o.pred : sm(15.8, 17.6, t);          // cadangan bila adegan tidak mengirim o.pred
+    const wb = o.k !== undefined ? o.k : (pose === 'run' ? 1 : 0), run = !!o.run || pose === 'run';
+    gl.useProgram(prog);
+    gl.enableVertexAttribArray(aPos); gl.enableVertexAttribArray(aNorm);
+    gl.uniformMatrix4fv(uVP, false, M4.mul(window.getPr(), window.getV()));
+    const lit = o.lit;
+    gl.uniform3fv(uTint, lit === undefined ? [1, 1, 1] : [0.78 * lit, 0.68 * lit, 0.54 * lit]);
+    renderApexBody(chain(root, S(S0, S0, S0), T(0, GROUND, 0)), {
+      tau: o.ph || 0, wb, g: run ? 1.6 : 1, pred, roar: o.roar || 0, atk: o.atk || 0, lean: run ? 0.10 * wb : 0, life: 1, t
     });
-    window.addEventListener('mouseup', function() { drag=false; });
-    window.addEventListener('mousemove', function(e) {
-        if (!drag) return;
-        dTheta = (e.clientX - xPrev) * 0.005;
-        dPhi   = (e.clientY - yPrev) * 0.005;
-        THETA += dTheta; PHI += dPhi;
-        PHI = Math.max(-1.4, Math.min(1.4, PHI));
-        xPrev = e.clientX; yPrev = e.clientY;
+    if (window.pg) gl.useProgram(window.pg);
+  };
+
+  /* ================= VIEWER STANDALONE (dilewati di master scene) ================= */
+  const canvas = document.getElementById('mycanvas');
+  if (!canvas || window.MASTER_SCENE || typeof Environment !== 'undefined') return;
+  function start() {
+    gl = canvas.getContext('webgl', { antialias: true });
+    if (!gl) { alert('WebGL tidak didukung'); return; }
+    initApex(gl);
+    gl.useProgram(prog); gl.enableVertexAttribArray(aPos); gl.enableVertexAttribArray(aNorm);
+    gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.clearColor(0.08, 0.08, 0.12, 1);
+
+    let theta = -0.65, phi = -0.06, dist = 7.0, dTheta = 0, dPhi = 0, drag = false, xp = 0, yp = 0;
+    const FRICTION = 0.88, TARGET_Y = 0.5, touches = {};
+    const clampPhi = () => (phi = Math.max(-1.4, Math.min(1.4, phi)));
+    canvas.addEventListener('mousedown', e => { drag = true; xp = e.clientX; yp = e.clientY; });
+    window.addEventListener('mouseup', () => (drag = false));
+    window.addEventListener('mousemove', e => {
+      if (!drag) return;
+      dTheta = (e.clientX - xp) * 0.005; dPhi = (e.clientY - yp) * 0.005; theta += dTheta; phi += dPhi; clampPhi(); xp = e.clientX; yp = e.clientY;
     });
-    CANVAS.addEventListener('wheel', function(e) {
-        CAM_DIST += e.deltaY * 0.01;
-        CAM_DIST = Math.max(2.5, Math.min(20, CAM_DIST));
-        e.preventDefault();
+    canvas.addEventListener('wheel', e => { e.preventDefault(); dist = Math.max(2.5, Math.min(20, dist + e.deltaY * 0.01)); }, { passive: false });
+    canvas.addEventListener('touchstart', e => { e.preventDefault(); for (const t of e.changedTouches) touches[t.identifier] = { x: t.clientX, y: t.clientY }; }, { passive: false });
+    canvas.addEventListener('touchmove', e => {
+      e.preventDefault();
+      if (e.touches.length === 1) {
+        const t = e.changedTouches[0], q = touches[t.identifier]; if (!q) return;
+        dTheta = (t.clientX - q.x) * 0.005; dPhi = (t.clientY - q.y) * 0.005; theta += dTheta; phi += dPhi; clampPhi();
+        touches[t.identifier] = { x: t.clientX, y: t.clientY };
+      } else if (e.touches.length === 2) {
+        const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        if (touches._pd) dist = Math.max(2.5, Math.min(20, dist - (d - touches._pd) * 0.02));
+        touches._pd = d;
+      }
     }, { passive: false });
+    canvas.addEventListener('touchend', e => { for (const t of e.changedTouches) delete touches[t.identifier]; if (e.touches.length < 2) delete touches._pd; });
 
-    // ─── TOUCH ───
-    var touches = {};
-    CANVAS.addEventListener('touchstart', function(e) {
-        e.preventDefault();
-        for (var t of e.changedTouches) touches[t.identifier]={x:t.clientX,y:t.clientY};
-    }, {passive:false});
-    CANVAS.addEventListener('touchmove', function(e) {
-        e.preventDefault();
-        if (e.touches.length===1) {
-            var t=e.changedTouches[0], p=touches[t.identifier];
-            if (!p) return;
-            dTheta=(t.clientX-p.x)*0.005; dPhi=(t.clientY-p.y)*0.005;
-            THETA+=dTheta; PHI+=dPhi;
-            PHI=Math.max(-1.4,Math.min(1.4,PHI));
-            touches[t.identifier]={x:t.clientX,y:t.clientY};
-        } else if (e.touches.length===2) {
-            var t0=e.touches[0],t1=e.touches[1];
-            var d=Math.hypot(t0.clientX-t1.clientX,t0.clientY-t1.clientY);
-            if (touches._pd) CAM_DIST-=(d-touches._pd)*0.02;
-            touches._pd=d;
-            CAM_DIST=Math.max(2.5,Math.min(20,CAM_DIST));
-        }
-    }, {passive:false});
-    CANVAS.addEventListener('touchend', function(e) {
-        for (var t of e.changedTouches) delete touches[t.identifier];
-        if (e.touches.length<2) delete touches._pd;
-    });
-
-    // ─── KONTROL ANIMASI & INTERAKSI ───
-    var predatorOn  = false;
-    var predatorAmt = 0;      // 0..1, dianimasikan halus di render loop
-    var isWalking   = true;   // animasi jalan aktif secara default
-    var walkBlend   = 1.0;    // 0..1 untuk transisi halus start/stop jalan
-    var walkTime    = 0;
-    var lastTime    = 0;
-
-    window.addEventListener('keydown', function (e) {
-        if (e.code === 'Space') {
-            predatorOn = !predatorOn;
-            updateUI();
-            e.preventDefault();
-        } else if (e.code === 'KeyW') {
-            isWalking = !isWalking;
-            updateUI();
-            e.preventDefault();
-        }
-    });
-
-    // Expose toggle functions to window for UI buttons
-    window.toggleWalk = function() {
-        isWalking = !isWalking;
-        updateUI();
-    };
-    window.togglePredator = function() {
-        predatorOn = !predatorOn;
-        updateUI();
-    };
-
+    let predatorOn = false, predAmt = 0, walking = true, walkBlend = 1, walkTime = 0, last = 0;
+    const setText = (id, txt, on) => { const el = document.getElementById(id); if (el) { el.textContent = txt; el.className = on ? 'badge active' : 'badge inactive' } };
     function updateUI() {
-        var walkStatusEl = document.getElementById('walk-status');
-        if (walkStatusEl) {
-            walkStatusEl.textContent = isWalking ? 'AKTIF' : 'NONAKTIF';
-            walkStatusEl.className = isWalking ? 'badge active' : 'badge inactive';
-        }
-        var predStatusEl = document.getElementById('pred-status');
-        if (predStatusEl) {
-            predStatusEl.textContent = predatorOn ? 'PREDATOR' : 'NORMAL';
-            predStatusEl.className = predatorOn ? 'badge active' : 'badge inactive';
-        }
+      setText('walk-status', walking ? 'AKTIF' : 'NONAKTIF', walking);
+      setText('pred-status', predatorOn ? 'PREDATOR' : 'NORMAL', predatorOn);
     }
+    window.toggleWalk = () => { walking = !walking; updateUI(); };
+    window.togglePredator = () => { predatorOn = !predatorOn; updateUI(); };
+    window.addEventListener('keydown', e => {
+      if (e.code === 'Space') { window.togglePredator(); e.preventDefault(); }
+      else if (e.code === 'KeyW') { window.toggleWalk(); e.preventDefault(); }
+    });
     updateUI();
 
-    // ─── GL STATE ───
-    GL.enable(GL.DEPTH_TEST);
-    GL.depthFunc(GL.LEQUAL);
-    GL.clearColor(0.08, 0.08, 0.12, 1.0);
-    GL.clearDepth(1.0);
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; gl.viewport(0, 0, canvas.width, canvas.height); }
+    window.addEventListener('resize', resize); resize();
 
-    // ─── RENDER LOOP ───
-    var animate = function(time) {
-        // Delta time halus
-        var dt = (time - lastTime) * 0.001;
-        if (lastTime === 0 || dt > 0.1) dt = 0.016;
-        lastTime = time;
+    function frame(now) {
+      let dt = (now - last) * 0.001; if (last === 0 || dt > 0.1) dt = 0.016; last = now;
+      if (!drag) { dTheta *= FRICTION; dPhi *= FRICTION; theta += dTheta; phi += dPhi; clampPhi(); }
+      const predTarget = predatorOn ? 1 : 0;
+      if (predAmt !== predTarget) { predAmt += (predTarget - predAmt) * 0.12; if (Math.abs(predTarget - predAmt) < 0.003) predAmt = predTarget; }
+      walkBlend += ((walking ? 1 : 0) - walkBlend) * 0.08; if (Math.abs((walking ? 1 : 0) - walkBlend) < 0.002) walkBlend = walking ? 1 : 0;
+      if (walkBlend > 0.001) walkTime += dt * 4.6;
 
-        // Inersia kamera
-        if (!drag) {
-            dTheta *= FRICTION; dPhi *= FRICTION;
-            THETA += dTheta; PHI += dPhi;
-            PHI = Math.max(-1.4, Math.min(1.4, PHI));
-        }
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      const eye = [dist * Math.sin(theta) * Math.cos(phi), dist * Math.sin(phi) + TARGET_Y, dist * Math.cos(theta) * Math.cos(phi)];
+      gl.uniformMatrix4fv(uVP, false, M4.mul(M4.perspective(42 * PI / 180, canvas.width / canvas.height, 0.1, 100), M4.lookAt(eye, [0, TARGET_Y, 0], [0, 1, 0])));
+      gl.uniform3fv(uTint, [1, 1, 1]);
+      const info = renderApexBody(M4.identity(), { tau: walkTime, wb: walkBlend, g: 1, pred: predAmt, roar: 0, atk: 0, lean: 0, life: 0, t: now * 0.001 });
 
-        // Transisi halus antara mode 1 <-> mode 2
-        var predTarget = predatorOn ? 1 : 0;
-        if (predatorAmt !== predTarget) {
-            predatorAmt += (predTarget - predatorAmt) * 0.12;
-            if (Math.abs(predTarget - predatorAmt) < 0.003) predatorAmt = predTarget;
-            model.setPredatorAmount(predatorAmt);
-        }
-
-        // Transisi halus start/stop jalan (blend in/out)
-        var targetBlend = isWalking ? 1.0 : 0.0;
-        walkBlend += (targetBlend - walkBlend) * 0.08;
-        if (Math.abs(targetBlend - walkBlend) < 0.002) walkBlend = targetBlend;
-
-        if (walkBlend > 0.001) {
-            walkTime += dt * 4.6; // Kecepatan langkah berjalan
-        }
-
-        var tau = walkTime;
-
-        // ═════════════════════════════════════════════════════════════════
-        // HIERARCHICAL TRANSFORMATION PIPELINE UNTUK ANIMASI BERJALAN
-        // ═════════════════════════════════════════════════════════════════
-        // Menggunakan Pivot Transform: semua bagian tubuh diputar tepat
-        // pada engsel sendi aslinya sehingga 100% INTACT & TIDAK PUTUS!
-
-        // 1. BADAN (ROOT)
-        //    - Translate: Vertical bobbing naik-turun halus saat melangkah
-        //    - Rotate Z: Waddle / goyang panggul kiri-kanan
-        //    - Rotate Y: Pelvis twist halus
-        //    - Skala: TETAP ALAMI (1.0, 1.0, 1.0) — badan TIDAK memanjang/gepeng!
-        var bobY    = -0.045 * Math.cos(2 * tau) * walkBlend;
-        var waddleZ =  0.055 * Math.sin(tau) * walkBlend;
-        var twistY  =  0.030 * Math.cos(tau) * walkBlend;
-
-        model.root.MOVE_MATRIX = LIBS.makePivotTransform(
-            0, 0, 0,
-            0, twistY, waddleZ,
-            1, 1, 1, // Skala badan tetap 100% natural, bulat sempurna!
-            0, bobY, 0
-        );
-
-        // 2. KAKI (LEGS)
-        //    - Pivot di hip (0, 0.75, 0): menjamin pangkal paha 100% menempel di badan!
-        //    - Rotate X: Ayunan kaki kiri & kanan berlawanan fase
-        //    - Rotate Z: Sedikit splay keluar saat melangkah
-        var legSwing = 0.36 * Math.sin(tau) * walkBlend;
-        var legSplay = 0.02 * Math.sin(tau) * walkBlend;
-
-        model.legL.MOVE_MATRIX = LIBS.makePivotTransform(
-            0, 0.75, 0,
-            legSwing, 0, -legSplay,
-            1, 1, 1,
-            0, 0, 0
-        );
-
-        model.legR.MOVE_MATRIX = LIBS.makePivotTransform(
-            0, 0.75, 0,
-            -legSwing, 0, legSplay,
-            1, 1, 1,
-            0, 0, 0
-        );
-
-        // 3. TELAPAK KAKI & JARI (FEET & TOES) — FOKUS SYARAT: SCALING!
-        //    - Pivot di dasar telapak: (0, -0.08, 0.0) agar dasar telapak tetap menapak di lantai
-        //    - Rotate X: Ankle flexion (menyesuaikan kemiringan kaki agar telapak menapak)
-        //    - Scaling (IMPACT CONTACT SQUASH):
-        //      HANYA telapak kaki dan jari-jarinya yang memipih gepeng (-45% di Y)
-        //      dan melebar (+25% di X & Z) tepat saat menginjak tanah,
-        //      lalu kembali bulat normal saat kaki diangkat!
-        var ankleL   = -0.55 * legSwing;
-        var ankleR   =  0.55 * legSwing;
-        var contactL = Math.max(0, -Math.sin(tau)) * walkBlend;
-        var contactR = Math.max(0,  Math.sin(tau)) * walkBlend;
-        var footSquashL = 1.0 - 0.45 * contactL; // gepeng hingga 0.55 saat menapak!
-        var footSpreadL = 1.0 + 0.25 * contactL; // melebar hingga 1.25 saat menapak!
-        var footSquashR = 1.0 - 0.45 * contactR;
-        var footSpreadR = 1.0 + 0.25 * contactR;
-
-        model.footL.MOVE_MATRIX = LIBS.makePivotTransform(
-            0, -0.08, 0,
-            ankleL, 0, 0,
-            footSpreadL, footSquashL, footSpreadL,
-            0, 0, 0
-        );
-
-        model.footR.MOVE_MATRIX = LIBS.makePivotTransform(
-            0, -0.08, 0,
-            ankleR, 0, 0,
-            footSpreadR, footSquashR, footSpreadR,
-            0, 0, 0
-        );
-
-        // 4. SAYAP (WINGS) — SYARAT: ROTATE ARBITRARY AXIS!
-        //    - PIVOT TEPAT DI DASAR RIM PARABOLOID: (0, 0.5625, 0)
-        //      Dasar rim paraboloid adalah bagian yang menempel di badan.
-        //      Dengan pivot di (0, 0.5625, 0), pangkal sayap 100% TERKUNCI & TIDAK LEPAS!
-        //    - Sumbu Sembarang 3D Diagonal: (±0.75, 0.30, 0.58)
-        //      Memadukan ayunan ke atas-bawah dan ke depan-belakang secara simultan.
-        var wingFlap = 0.26 * Math.cos(tau) * walkBlend;
-
-        model.wingL.MOVE_MATRIX = LIBS.makePivotTransformAxis(
-            0, 0.5625, 0,
-            0.75, 0.30, 0.58,
-            wingFlap,
-            1, 1, 1,
-            0, 0, 0
-        );
-
-        model.wingR.MOVE_MATRIX = LIBS.makePivotTransformAxis(
-            0, 0.5625, 0,
-            -0.75, 0.30, 0.58,
-            -wingFlap,
-            1, 1, 1,
-            0, 0, 0
-        );
-
-        // 5. EKOR (TAIL) — SYARAT: ROTATE ARBITRARY AXIS!
-        //    - Pivot tepat di titik pusat pangkal kurva Bezier: (0, -0.11, -0.52)
-        //    - Rotasi sumbu sembarang diagonal 3D: (0.35, 1.0, 0.40)
-        //    - Mengibaskan ekor secara anggun beriringan dengan goyangan badan
-        var tailWag = 0.22 * Math.sin(tau) * walkBlend;
-
-        model.tail.MOVE_MATRIX = LIBS.makePivotTransformAxis(
-            0, -0.11, -0.52,
-            0.35, 1.0, 0.40,
-            tailWag,
-            1, 1, 1,
-            0, 0, 0
-        );
-
-        // 6. KEPALA (HEAD)
-        //    - Pivot di leher: (0, -0.5, 0)
-        //    - Translate Z: Head bobbing maju-mundur khas burung
-        //    - Rotate X: Mengangguk halus
-        //    - Rotate Z: Menstabilkan orientasi pandangan mata terhadap roll badan
-        //    - Skala: TETAP ALAMI (1.0, 1.0, 1.0)
-        var headBobZ  =  0.045 * (1.0 - Math.cos(2 * tau)) * walkBlend;
-        var headNodX  =  0.050 * Math.sin(2 * tau) * walkBlend;
-        var headRollZ = -0.45  * waddleZ;
-
-        model.head.MOVE_MATRIX = LIBS.makePivotTransform(
-            0, -0.5, 0,
-            headNodX, 0, headRollZ,
-            1, 1, 1, // Skala kepala tetap 100% normal
-            0, 0, headBobZ
-        );
-
-        // Update indikator live scale pada HUD jika tersedia
-        var scaleLiveEl = document.getElementById('live-scale-val');
-        if (scaleLiveEl) {
-            var activeFootSquash = Math.min(footSquashL, footSquashR);
-            var activeFootSpread = Math.max(footSpreadL, footSpreadR);
-            if (activeFootSquash < 0.95) {
-                scaleLiveEl.textContent = 'Menapak: GEPENG (Tinggi Sy: ' + activeFootSquash.toFixed(2) + 'x, Lebar: ' + activeFootSpread.toFixed(2) + 'x)';
-            } else {
-                scaleLiveEl.textContent = 'Di Udara: NORMAL (Sy: 1.00x, Sx: 1.00x)';
-            }
-        }
-
-        // Render scene
-        GL.viewport(0, 0, CANVAS.width, CANVAS.height);
-        GL.clear(GL.COLOR_BUFFER_BIT | GL.DEPTH_BUFFER_BIT);
-
-        GL.uniformMatrix4fv(_Pmat, false, PROJMATRIX);
-        GL.uniformMatrix4fv(_Vmat, false, buildViewMatrix());
-
-        root.render(LIBS.get_I4());
-
-        GL.flush();
-        window.requestAnimationFrame(animate);
-    };
-    animate(0);
-}
-
-// =========================================================================
-// 5. MASTER SCENE INTEGRATION (drawApex)
-// =========================================================================
-(function () {
-    var sceneModel = null;
-    var sceneProg = null;
-    var s_Pmat, s_Vmat, s_Mmat, s_pos, s_col;
-    var predAmt = 0;
-
-    function initSceneApex(gl) {
-        if (sceneModel) return;
-        var vsSource = `
-            attribute vec3 position;
-            attribute vec3 color;
-            uniform mat4 Pmatrix, Vmatrix, Mmatrix;
-            varying vec3 vColor;
-            void main(void) {
-                gl_Position = Pmatrix * Vmatrix * Mmatrix * vec4(position, 1.0);
-                vColor = color;
-            }
-        `;
-        var fsSource = `
-            precision mediump float;
-            varying vec3 vColor;
-            void main(void) {
-                gl_FragColor = vec4(vColor, 1.0);
-            }
-        `;
-        function compileShader(src, type) {
-            var sh = gl.createShader(type);
-            gl.shaderSource(sh, src);
-            gl.compileShader(sh);
-            return sh;
-        }
-        sceneProg = gl.createProgram();
-        gl.attachShader(sceneProg, compileShader(vsSource, gl.VERTEX_SHADER));
-        gl.attachShader(sceneProg, compileShader(fsSource, gl.FRAGMENT_SHADER));
-        gl.linkProgram(sceneProg);
-
-        s_Pmat = gl.getUniformLocation(sceneProg, 'Pmatrix');
-        s_Vmat = gl.getUniformLocation(sceneProg, 'Vmatrix');
-        s_Mmat = gl.getUniformLocation(sceneProg, 'Mmatrix');
-        s_pos  = gl.getAttribLocation(sceneProg, 'position');
-        s_col  = gl.getAttribLocation(sceneProg, 'color');
-        gl.enableVertexAttribArray(s_pos);
-        gl.enableVertexAttribArray(s_col);
-
-        sceneModel = buildApexPredator(gl, sceneProg, s_pos, s_col, s_Mmat);
-        sceneModel.root.setup();
+      const el = document.getElementById('live-scale-val');
+      if (el) el.textContent = info.footSquash < 0.95
+        ? 'Menapak: GEPENG (Tinggi Sy: ' + info.footSquash.toFixed(2) + 'x, Lebar: ' + info.footSpread.toFixed(2) + 'x)'
+        : 'Di Udara: NORMAL (Sy: 1.00x, Sx: 1.00x)';
+      requestAnimationFrame(frame);
     }
-
-    window.drawApex = function drawApex(gfx, root, pose, t, o) {
-        var gl = window.gl || (gfx && gfx.gl);
-        if (!gl) return;
-        initSceneApex(gl);
-
-        o = o || {};
-        var ph = o.ph || 0;
-        var isRun = (pose === 'run');
-        var walkBlend = isRun ? 1.0 : 0.0;
-        var tau = ph;
-
-        /* ── Logika Perubahan Paruh (Transformasi Mode Biasa -> Monster) ── */
-        var targetPredator = 0;
-        if (t >= 15.4 && t < 18.0) {
-            targetPredator = Math.min(1.0, Math.max(0.0, (t - 15.4) / 1.6));
-        } else if (t >= 18.0) {
-            targetPredator = (pose === 'run' || pose === 'swat' || pose === 'roar') ? 1.0 : 0.0;
-        }
-
-        predAmt += (targetPredator - predAmt) * 0.15;
-        if (Math.abs(targetPredator - predAmt) < 0.003) predatorAmt = targetPredator;
-        sceneModel.setPredatorAmount(predAmt);
-
-        /* ── Hierarchical Pivot Transformation Pipeline Asli ── */
-        var bobY    = -0.045 * Math.cos(2 * tau) * walkBlend;
-        var waddleZ =  0.055 * Math.sin(tau) * walkBlend;
-        var twistY  =  0.030 * Math.cos(tau) * walkBlend;
-        sceneModel.root.MOVE_MATRIX = LIBS.makePivotTransform(0, 0, 0, 0, twistY, waddleZ, 1, 1, 1, 0, bobY, 0);
-
-        var legSwing = 0.36 * Math.sin(tau) * walkBlend;
-        var legSplay = 0.02 * Math.sin(tau) * walkBlend;
-        sceneModel.legL.MOVE_MATRIX = LIBS.makePivotTransform(0, 0.75, 0, legSwing, 0, -legSplay, 1, 1, 1, 0, 0, 0);
-        sceneModel.legR.MOVE_MATRIX = LIBS.makePivotTransform(0, 0.75, 0, -legSwing, 0, legSplay, 1, 1, 1, 0, 0, 0);
-
-        var ankleL   = -0.55 * legSwing;
-        var ankleR   =  0.55 * legSwing;
-        var contactL = Math.max(0, -Math.sin(tau)) * walkBlend;
-        var contactR = Math.max(0,  Math.sin(tau)) * walkBlend;
-        var footSquashL = 1.0 - 0.45 * contactL, footSpreadL = 1.0 + 0.25 * contactL;
-        var footSquashR = 1.0 - 0.45 * contactR, footSpreadR = 1.0 + 0.25 * contactR;
-        sceneModel.footL.MOVE_MATRIX = LIBS.makePivotTransform(0, -0.08, 0, ankleL, 0, 0, footSpreadL, footSquashL, footSpreadL, 0, 0, 0);
-        sceneModel.footR.MOVE_MATRIX = LIBS.makePivotTransform(0, -0.08, 0, ankleR, 0, 0, footSpreadR, footSquashR, footSpreadR, 0, 0, 0);
-
-        var wingFlap = 0.26 * Math.cos(tau) * walkBlend;
-        sceneModel.wingL.MOVE_MATRIX = LIBS.makePivotTransformAxis(0, 0.5625, 0,  0.75, 0.30, 0.58,  wingFlap, 1, 1, 1, 0, 0, 0);
-        sceneModel.wingR.MOVE_MATRIX = LIBS.makePivotTransformAxis(0, 0.5625, 0, -0.75, 0.30, 0.58, -wingFlap, 1, 1, 1, 0, 0, 0);
-
-        var tailWag = 0.22 * Math.sin(tau) * walkBlend;
-        sceneModel.tail.MOVE_MATRIX = LIBS.makePivotTransformAxis(0, -0.11, -0.52, 0.35, 1.0, 0.40, tailWag, 1, 1, 1, 0, 0, 0);
-
-        var headBobZ  =  0.045 * (1.0 - Math.cos(2 * tau)) * walkBlend;
-        var headNodX  =  0.050 * Math.sin(2 * tau) * walkBlend;
-        var headRollZ = -0.45 * waddleZ;
-        sceneModel.head.MOVE_MATRIX = LIBS.makePivotTransform(0, -0.5, 0, headNodX, 0, headRollZ, 1, 1, 1, 0, 0, headBobZ);
-
-        gl.useProgram(sceneProg);
-        gl.uniformMatrix4fv(s_Pmat, false, window.getPr());
-        gl.uniformMatrix4fv(s_Vmat, false, window.getV());
-
-        sceneModel.root.render(root);
-
-        if (window.pg) gl.useProgram(window.pg);
-    };
+    requestAnimationFrame(frame);
+  }
+  if (document.readyState === 'complete') start(); else window.addEventListener('load', start);
 })();
-
-if (!window.MASTER_SCENE) {
-    window.addEventListener('load', main);
-}
