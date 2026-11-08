@@ -339,7 +339,7 @@
 
     // KAKI (pivot di pinggul) + TELAPAK & JARI (scaling: gepeng & melebar saat menapak)
     const swing = 0.36 * sn * a, splay = 0.02 * sn * wb;
-    const contactL = Math.max(0, -sn) * wb, contactR = Math.max(0, sn) * wb;
+    const contactL = Math.max(0, sn) * wb, contactR = Math.max(0, -sn) * wb;
     const squashL = 1 - 0.45 * contactL, spreadL = 1 + 0.25 * contactL, squashR = 1 - 0.45 * contactR, spreadR = 1 + 0.25 * contactR;
     // [x, ayun kaki, splay, ayun ankle, squash Y, melebar XZ] untuk kiri lalu kanan (kanan berlawanan fase)
     for (const [x, sw, sp, ank, sq, spr] of [[-0.34, swing, -splay, -0.55 * swing, squashL, spreadL], [0.34, -swing, splay, 0.55 * swing, squashR, spreadR]]) {
