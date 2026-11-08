@@ -123,16 +123,20 @@ function draw(m, model, col, flat, shine) {
     gl.vertexAttribPointer(aP, 3, gl.FLOAT, false, 24, 0); gl.vertexAttribPointer(aN, 3, gl.FLOAT, false, 24, 12);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.ib); gl.drawElements(gl.TRIANGLES, m.n, gl.UNSIGNED_SHORT, 0);
 }
-const gfx = { unit, draw };
+window.gl = gl;
+window.pg = pg;
+window.getV = () => V;
+window.getPr = () => Pr;
+const gfx = { unit, draw, gl, pg, getV: () => V, getPr: () => Pr };
 Environment.init(gfx);
 
 /* ===== 4. Kamera, UI, loop ===== */
 const B = Environment.bounds;
 let mode = 'orbit', cy = .2, cp = .25, dist = 13, drag = 0, lx0 = 0, ly0 = 0, showRef = false;
-canvas.onpointerdown = e => { drag = 1; lx0 = e.clientX; ly0 = e.clientY; canvas.setPointerCapture(e.pointerId); mode = 'orbit'; syncBtn() };
+canvas.onpointerdown = e => { if (mode === 'scene') return; drag = 1; lx0 = e.clientX; ly0 = e.clientY; canvas.setPointerCapture(e.pointerId); mode = 'orbit'; syncBtn() };
 canvas.onpointermove = e => { if (!drag) return; cy -= (e.clientX - lx0) * .008; cp = Math.min(.9, Math.max(-.1, cp + (e.clientY - ly0) * .008)); lx0 = e.clientX; ly0 = e.clientY };
 canvas.onpointerup = () => drag = 0;
-canvas.addEventListener('wheel', e => { e.preventDefault(); dist = Math.min(40, Math.max(3, dist + e.deltaY * .01)) }, { passive: false });
+canvas.addEventListener('wheel', e => { if (mode === 'scene') return; e.preventDefault(); dist = Math.min(40, Math.max(3, dist + e.deltaY * .01)) }, { passive: false });
 
 function viewMatrix(t) {
     if (mode === 'fly') {      // kamera menyusuri lorong, mulus (smoothstep)

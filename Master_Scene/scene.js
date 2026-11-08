@@ -38,98 +38,165 @@ const Scene = (() => {
         return m;
     };
 
-    /* ---------- adaptor mesh: kode Semibot memanggil mesh([[fn(u,w), nu, nw], ...]) ---------- */
-    // grid (nw+1) x (nu+1), baris = w, kolom = u -> buildMesh milik main.js (tiap patch punya normal sendiri)
-    const mesh = specs => buildMesh(specs.map(([f, nu, nw]) => {
-        const v = [];
-        for (let i = 0; i <= nw; i++) for (let j = 0; j <= nu; j++) v.push(...f(j / nu, i / nw));
-        return { v, rows: nw + 1, cols: nu + 1 };
-    }));
+    /* =================== SEMIBOT (Model Asli dari Semibot_Bunny_Ear/main.js) =================== */
+    function createRoundedDome(radius, height, segments) {
+        const sphereRadius = (radius * radius + height * height) / (2 * height);
+        const maxAngle = Math.acos((sphereRadius - height) / sphereRadius);
+        const vertices = [];
+        for (let i = 0; i <= segments; i++) {
+            const angle = maxAngle * i / segments;
+            const r = sphereRadius * Math.sin(angle);
+            const y = height - sphereRadius + sphereRadius * Math.cos(angle);
+            for (let j = 0; j <= segments; j++) {
+                const theta = 2 * Math.PI * j / segments;
+                vertices.push(r * Math.cos(theta), y, r * Math.sin(theta));
+            }
+        }
+        return vertices;
+    }
+    function makeTube(seg, ring) {
+        const z = new Array((seg + 1) * (ring + 1) * 3).fill(0);
+        return upload(z, z, createGridIndices(seg + 1, ring + 1));
+    }
+    function setTube(m, verts) {
+        const _gl = window.gl;
+        if (!_gl) return;
+        _gl.bindBuffer(_gl.ARRAY_BUFFER, m.vb);
+        _gl.bufferData(_gl.ARRAY_BUFFER, interleave(verts, computeNormals(verts, createGridIndices(17, 13))), _gl.DYNAMIC_DRAW);
+    }
 
-    /* =================== SEMIBOT (kode asli, tidak diubah) =================== */
-    const TAU=Math.PI*2;
-    function bez(P,t){let Q=P.map(p=>p.slice());
-      for(let k=P.length-1;k>0;k--)for(let i=0;i<k;i++)Q[i]=Q[i].map((x,c)=>x*(1-t)+Q[i+1][c]*t);return Q[0]}
+    const R_HEAD = .307, H_DOME = .34;
+    const mLeg = solidCone(.115, .61);
+    const mArm = solidCone(.07, .72);
+    const mBand = solidCyl(.352, .36);
+    const mMain = solidCyl(.34, .36);
+    const mCollar = solidCyl(.315, .13);
+    const mHeadCyl = solidCyl(R_HEAD, .15);
+    const mHinge = solidCyl(.026, .075);
+    const mHealthSquare = box(1, 1, 1);
+    const mSeamBand = buildMesh([part(createCylinder(1, 1, SEG))]);
+    const mDome = buildMesh([part(createRoundedDome(R_HEAD, H_DOME, SEG)), disk(R_HEAD, 0)]);
+    const mBall = buildMesh([part(createSphere(1, SEG))]);
+    const earOut = [makeTube(16, 12), makeTube(16, 12)], earIn = [makeTube(16, 12), makeTube(16, 12)];
 
-    const rev=P=>(u,w)=>{const a=TAU*u,p=bez(P,w);return[p[0]*Math.cos(a),p[1],p[0]*Math.sin(a)]};
-    const lathe=segs=>mesh(segs.map(s=>[rev(s),36,s.length>2?16:1]));
-
-    const HEAD=[[[0,0],[.34,0]],[[.34,0],[.34,.17]],[[.34,.17],[.34,.358],[.188,.51],[0,.51]]];
-    const BODY=[[[0,0],[.40,0]],[[.40,0],[.40,.34]],[[.40,.34],[.365,.34]],[[.365,.34],[.365,.86]],
-      [[.365,.86],[.345,.86]],[[.345,.86],[.345,1.02]],[[.345,1.02],[0,1.02]]];
-    const head=lathe(HEAD), body=lathe(BODY);
-
-    const earP = [[0,0,0], [0.08,0.25,0.05], [0.05,0.55,0.15], [0.15,0.75,-0.05]];
-    const earFunc = (u, w) => {
-      const a = TAU * u, p = bez(earP, w);
-      const r = Math.sin(w * Math.PI) * 0.11 + 0.025; 
-      const rx = r * Math.cos(a) * 1.6, rz = r * Math.sin(a) * 0.35; 
-      return [p[0] + rx, p[1], p[2] + rz];
+    const COL = {
+        white: [.97, .97, .97],
+        black: [.02, .02, .03],
+        pink: [1, .62, .7],
+        ledOff: [.22, .07, .07],
+        plate: [.1, .03, .03]
     };
-    const ear = mesh([[earFunc, 20, 16]]);
-    const sph = mesh([[(u,w)=>{const a=TAU*u,b=Math.PI*w;return[Math.sin(b)*Math.cos(a),Math.cos(b),Math.sin(b)*Math.sin(a)]},36,24]]);
-    const cone = mesh([[(u,w)=>{const a=TAU*u;return[(1-w)*Math.cos(a),-w,(1-w)*Math.sin(a)]},32,10],[(u,w)=>{const a=TAU*u;return[w*Math.cos(a),0,w*Math.sin(a)]},32,1]]);
+    const earW = u => .085 * Math.pow(Math.sin(Math.PI * (.2 + .8 * u)), .8);
 
-    function target(st,t){
-      const s=Math.sin,c=Math.cos,P={legS:1,swL:0,swR:0,aL:0,aR:0,az:.14,
-        bob:.012*s(2*t),R:0,yaw:0,tx:0,tz:0,hy:.35*s(.8*t),hp:.05*s(1.3*t),lx:.8*s(.8*t),ly:.3*c(1.1*t)};
-      if(st=='idle'){P.aL=.06*s(1.2*t);P.aR=-.06*s(1.2*t)}
-      if(st=='walk'){const p=t*12;Object.assign(P,{swL:.7*s(p),swR:-.7*s(p),aL:-.6*s(p),aR:.6*s(p),bob:.04*Math.abs(c(p)),hy:.12*s(p/2),lx:0,ly:0})} // walk dipercepat untuk 'run'
-      if(st=='tumble')Object.assign(P,{legS:.55,swL:1.2*s(7*t),swR:1.2*s(7*t+2),aL:2*s(8*t),aR:2*s(8*t+2),az:.9,bob:.35+.4*Math.abs(s(2*t*1.2)),tx:1.2*s(2.3*t),tz:1.1*s(1.7*t),hy:.6*s(5*t),lx:1.5*s(6*t),ly:1.5*c(5*t)});
-      return P;
+    function earCtl(s, P, t) {
+        const f = P.flop || 0, w = P.tw || 0;
+        return [
+            [s * .13, .40, -.03],
+            [s * .17, .70, -.03 - .06 * f],
+            [s * (.23 + .03 * Math.sin(1.3 * t + s)), .92, -.06 - .20 * f],
+            [s * (.21 + .05 * w), .98 - .12 * Math.abs(f), -.22 - .40 * f]
+        ];
     }
 
-    function drawChar(gfx, rootMatrix, P, bl, col){
-      const S=P.legS, ph=.5*S, B=mm(rootMatrix, M.T(0,ph-.02,0));
-      gfx.draw(body, B, col);
-
-      // Detail punggung
-      const Back = mm(B, M.T(0, .82, -.36));
-      gfx.draw(body, mm(Back, M.S(.18, .04, .08)), col); 
-      for(let i=0; i<5; i++) {
-        const bx = (i - 2) * 0.05, bCol = (i === 0) ? [1,.2,.2] : [.15,.2,.15]; 
-        gfx.draw(body, mm(Back, M.T(bx, -.06, 0), M.S(.018, .025, .02)), bCol);
-      }
-
-      for(const s of[-1,1]){
-        const H=mm(B,M.T(s*.175,.02,0),M.RX(s<0?P.swL:P.swR));
-        gfx.draw(cone,mm(H,M.S(.125,ph,.125)),col);
-      }
-      for(const s of[-1,1]){
-        const A=mm(B,M.T(s*.4,.8,0),M.RZ(s*P.az),M.RX(s<0?P.aR:P.aL));
-        gfx.draw(cone,mm(A,M.S(.085,.66,.06)),col);
-      }
-      
-      const Hd=mm(B,M.T(0,1.03,0),M.RY(P.hy),M.RX(P.hp));
-      gfx.draw(head, Hd, col);
-
-      // Telinga
-      gfx.draw(ear, mm(Hd, M.T(.13, .46, 0), M.RZ(-.15), M.S(.8, .8, .8)), [1,1,1]);
-      gfx.draw(ear, mm(Hd, M.T(-.13, .46, 0), M.RZ(.15), M.RX(.5 + (P.bob > 0.02 ? Math.sin(t*8)*0.1 : 0)), M.S(.8, .8, .8)), [1,1,1]);
-
-      // Mata
-      const dx=P.lx*.25, dy=P.ly*.25, dl=Math.hypot(dx,dy,1);
-      for(const s of[-1,1]){
-        const ex=s*.17, ey=.17, ez=.28;
-        gfx.draw(sph, mm(Hd,M.T(ex,ey,ez),M.S(.16,.16*bl,.16)), [1,1,1]);
-        gfx.draw(sph, mm(Hd,M.T(ex+dx/dl*.152,ey+dy/dl*.152*bl,ez+.152/dl),M.S(.05,.05*bl,.05)), [0,0,0]);
-      }
+    function target(st, t) {
+        const s = Math.sin, c = Math.cos;
+        const P = {
+            swL: 0, swR: 0, aL: 0, aR: 0, az: .12,
+            bob: .012 * s(2 * t), sy: 1,
+            tx: 0, tz: 0,
+            hy: .35 * s(.8 * t), hp: .04 * s(1.1 * t),
+            lx: .8 * s(.8 * t), ly: .25 * c(1.1 * t),
+            flop: .15 * s(1.2 * t),
+            tw: .3 * s(1.7 * t) + (t % 6 < .5 ? .8 * s((t % 6) * 25) : 0)
+        };
+        if (st === 'walk') {
+            const p = t * 12;
+            Object.assign(P, {
+                swL: .65 * s(p), swR: -.65 * s(p), aL: -.6 * s(p), aR: .6 * s(p),
+                bob: .04 * Math.abs(c(p)), az: .14,
+                hy: .1 * s(p / 2), lx: 0, ly: 0, sy: 1, flop: .5 * s(2 * p), tw: 0
+            });
+        }
+        if (st === 'tumble') {
+            Object.assign(P, {
+                swL: 1.2 * s(7 * t), swR: 1.2 * s(7 * t + 2),
+                aL: 2 * s(8 * t), aR: 2 * s(8 * t + 2), az: .9,
+                bob: .35 + .4 * Math.abs(s(2 * t * 1.2)),
+                tx: 1.2 * s(2.3 * t), tz: 1.1 * s(1.7 * t),
+                hy: .6 * s(5 * t), lx: 1.5 * s(6 * t), ly: 1.5 * c(5 * t),
+                flop: .9, tw: 0
+            });
+        }
+        return P;
     }
 
-    /* =================== WRAPPER SEMIBOT ===================
-       drawSemibot(gfx, rootMatrix, pose, t, o)
-         pose : 'idle' | 'walk' | 'run' | 'tumble'
-         o.k    bobot pose terhadap idle (0..1), untuk transisi halus
-         o.ph   fase langkah (rad) -> kaki mengikuti JARAK TEMPUH, bukan waktu (tidak tergelincir)
-         o.lean condong badan (rad, + = maju)   o.sq squash (+) / regang (-)
-         o.spin sudut tumble (rad)   o.axis sumbu tumble [x,y,z]
-       rootMatrix = posisi + yaw di lantai; Semibot menghadap +Z. */
-    const SEMI_COL = [.80, .82, .86];      // GANTI dengan warna asli Semibot
-    const PIV = 1.0;                       // pusat putaran tumble (tengah badan, tinggi 2.0)
+    function drawChar(gfx, rootMatrix, P, bl, body) {
+        const seam = body.map(ch => ch * .32);
+        const root = rootMatrix;
+        const d = gfx.draw;
+
+        // Kaki
+        for (const s of [-1, 1]) {
+            const H = mm(root, M.T(s * .145, .6, 0), M.RX(s < 0 ? P.swL : P.swR));
+            d(mLeg, mm(H, M.T(0, -.30, 0), M.RX(Math.PI)), body);
+        }
+
+        // Badan
+        d(mBand, mm(root, M.T(0, .78, 0)), body);
+        d(mMain, mm(root, M.T(0, 1.14, 0)), body);
+        d(mCollar, mm(root, M.T(0, 1.385, 0)), body);
+        d(mSeamBand, mm(root, M.T(0, .96, 0), M.S(.354, .009, .354)), seam, true);
+        d(mSeamBand, mm(root, M.T(0, 1.32, 0), M.S(.342, .009, .342)), seam, true);
+
+        // Lengan
+        for (const s of [-1, 1]) {
+            const A = mm(root, M.T(s * .355, 1.29, 0), M.RZ(s * P.az), M.RX(s < 0 ? P.aR : P.aL));
+            d(mArm, mm(A, M.T(0, -.36, 0), M.RX(Math.PI), M.S(.9, 1, 1)), body);
+        }
+
+        // 10 Indikator LED Health bar di punggung
+        const health = 10;
+        for (let i = 0; i < health; i++) {
+            const th = -.5 + i / (health - 1);
+            const L = mm(root, M.T(.319 * Math.sin(th), 1.385, -.319 * Math.cos(th)), M.RY(Math.PI - th));
+            d(mHealthSquare, mm(L, M.S(.016, .016, .005)), COL.plate);
+            d(mHealthSquare, mm(L, M.T(0, 0, .007), M.S(.011, .011, .003)), [.2, .9, .3], true);
+        }
+
+        // Kepala: silinder + kubah membulat (rounded dome)
+        const Hd = mm(root, M.T(0, 1.47, 0), M.RY(P.hy), M.RX(P.hp));
+        d(mHeadCyl, mm(Hd, M.T(0, .075, 0)), body);
+        d(mDome, mm(Hd, M.T(0, .15, 0)), body);
+        d(mHinge, mm(Hd, M.T(0, 0, -R_HEAD + .012), M.RZ(Math.PI / 2)), body);
+        d(mBall, mm(Hd, M.T(0, 0, -R_HEAD - .014), M.S(.045, .026, .026)), body);
+
+        // Mata
+        const dl = Math.hypot(P.lx * .35, P.ly * .35, 1);
+        const dx = P.lx * .35 / dl, dy = P.ly * .35 / dl, dz = 1 / dl;
+        for (const s of [-1, 1]) {
+            const ex = s * .16, ey = .16, ez = .225;
+            d(mBall, mm(Hd, M.T(ex, ey, ez), M.S(.108, .108 * bl, .108)), COL.white, true);
+            d(mBall, mm(Hd, M.T(ex + dx * .097, ey + dy * .097 * bl, ez + dz * .097), M.S(.03, .03 * bl, .02)), COL.black, true);
+        }
+
+        // Telinga kelinci: tabung Bezier kubik 3D dinamis
+        [-1, 1].forEach((s, i) => {
+            const c = earCtl(s, P, t);
+            setTube(earOut[i], createBezierTube(c[0], c[1], c[2], c[3], 16, 12, u => [earW(u), earW(u) * .32]));
+            d(earOut[i], Hd, body);
+            const ci = c.map(pt => [pt[0], pt[1], pt[2] + .016]);
+            setTube(earIn[i], createBezierTube(ci[0], ci[1], ci[2], ci[3], 16, 12, u => [earW(u) * .55, earW(u) * .34]));
+            d(earIn[i], Hd, COL.pink);
+        });
+    }
+
+    /* =================== WRAPPER SEMIBOT =================== */
+    const SEMI_COL = [.97, .97, .97];      // Putih bersih Semibot asli
+    const PIV = 1.0;
 
     function poseP(name, t, o) {
         if (name === 'run' || name === 'walk') {
-            const P = target('walk', o.ph !== undefined ? o.ph / 12 : t);    // target('walk') memakai fase p = t*12
+            const P = target('walk', o.ph !== undefined ? o.ph / 12 : t);
             if (name === 'run') { P.swL *= 1.55; P.swR *= 1.55; P.aL *= 1.7; P.aR *= 1.7; P.bob *= 2.2; P.az = .35; P.hy *= .5; }
             return P;
         }
@@ -142,13 +209,13 @@ const Scene = (() => {
         const k = o.k === undefined ? 1 : o.k;
         if (pose !== 'idle' && k < 1) P = blendP(target('idle', t), P, k);
         let R = rootMatrix;
-        if (o.lean) R = mm(R, M.RX(o.lean));                                                   // pivot di kaki
-        if (o.sq) R = mm(R, M.S(1 + .10 * o.sq, 1 - .18 * o.sq, 1 + .10 * o.sq));              // scaling: squash / regang
-        if (pose === 'tumble') {                                                               // arbitrary axis: M.R_Arb disuntik ke root
+        if (o.lean) R = mm(R, M.RX(o.lean));
+        if (o.sq) R = mm(R, M.S(1 + .10 * o.sq, 1 - .18 * o.sq, 1 + .10 * o.sq));
+        if (pose === 'tumble') {
             const ax = o.axis || [1, .3, .15], ang = o.spin !== undefined ? o.spin : 5.5 * t;
             R = mm(R, M.T(0, PIV, 0), M.R_Arb(ang, ax[0], ax[1], ax[2]), M.T(0, -PIV, 0));
         } else R = mm(R, M.T(0, P.bob, 0));
-        const p = t % 3.7, bl = p < .14 ? 1 - .85 * Math.sin(Math.PI * p / .14) : 1;           // kedip
+        const p = t % 3.7, bl = p < .14 ? 1 - .85 * Math.sin(Math.PI * p / .14) : 1;
         drawChar(gfx, R, P, bl, SEMI_COL);
     }
 

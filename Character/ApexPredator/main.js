@@ -1745,4 +1745,122 @@ function main() {
     animate(0);
 }
 
-window.addEventListener('load', main);
+// =========================================================================
+// 5. MASTER SCENE INTEGRATION (drawApex)
+// =========================================================================
+(function () {
+    var sceneModel = null;
+    var sceneProg = null;
+    var s_Pmat, s_Vmat, s_Mmat, s_pos, s_col;
+    var predAmt = 0;
+
+    function initSceneApex(gl) {
+        if (sceneModel) return;
+        var vsSource = `
+            attribute vec3 position;
+            attribute vec3 color;
+            uniform mat4 Pmatrix, Vmatrix, Mmatrix;
+            varying vec3 vColor;
+            void main(void) {
+                gl_Position = Pmatrix * Vmatrix * Mmatrix * vec4(position, 1.0);
+                vColor = color;
+            }
+        `;
+        var fsSource = `
+            precision mediump float;
+            varying vec3 vColor;
+            void main(void) {
+                gl_FragColor = vec4(vColor, 1.0);
+            }
+        `;
+        function compileShader(src, type) {
+            var sh = gl.createShader(type);
+            gl.shaderSource(sh, src);
+            gl.compileShader(sh);
+            return sh;
+        }
+        sceneProg = gl.createProgram();
+        gl.attachShader(sceneProg, compileShader(vsSource, gl.VERTEX_SHADER));
+        gl.attachShader(sceneProg, compileShader(fsSource, gl.FRAGMENT_SHADER));
+        gl.linkProgram(sceneProg);
+
+        s_Pmat = gl.getUniformLocation(sceneProg, 'Pmatrix');
+        s_Vmat = gl.getUniformLocation(sceneProg, 'Vmatrix');
+        s_Mmat = gl.getUniformLocation(sceneProg, 'Mmatrix');
+        s_pos  = gl.getAttribLocation(sceneProg, 'position');
+        s_col  = gl.getAttribLocation(sceneProg, 'color');
+        gl.enableVertexAttribArray(s_pos);
+        gl.enableVertexAttribArray(s_col);
+
+        sceneModel = buildApexPredator(gl, sceneProg, s_pos, s_col, s_Mmat);
+        sceneModel.root.setup();
+    }
+
+    window.drawApex = function drawApex(gfx, root, pose, t, o) {
+        var gl = window.gl || (gfx && gfx.gl);
+        if (!gl) return;
+        initSceneApex(gl);
+
+        o = o || {};
+        var ph = o.ph || 0;
+        var isRun = (pose === 'run');
+        var walkBlend = isRun ? 1.0 : 0.0;
+        var tau = ph;
+
+        /* ── Logika Perubahan Paruh (Transformasi Mode Biasa -> Monster) ── */
+        var targetPredator = 0;
+        if (t >= 15.4 && t < 18.0) {
+            targetPredator = Math.min(1.0, Math.max(0.0, (t - 15.4) / 1.6));
+        } else if (t >= 18.0) {
+            targetPredator = (pose === 'run' || pose === 'swat' || pose === 'roar') ? 1.0 : 0.0;
+        }
+
+        predAmt += (targetPredator - predAmt) * 0.15;
+        if (Math.abs(targetPredator - predAmt) < 0.003) predatorAmt = targetPredator;
+        sceneModel.setPredatorAmount(predAmt);
+
+        /* ── Hierarchical Pivot Transformation Pipeline Asli ── */
+        var bobY    = -0.045 * Math.cos(2 * tau) * walkBlend;
+        var waddleZ =  0.055 * Math.sin(tau) * walkBlend;
+        var twistY  =  0.030 * Math.cos(tau) * walkBlend;
+        sceneModel.root.MOVE_MATRIX = LIBS.makePivotTransform(0, 0, 0, 0, twistY, waddleZ, 1, 1, 1, 0, bobY, 0);
+
+        var legSwing = 0.36 * Math.sin(tau) * walkBlend;
+        var legSplay = 0.02 * Math.sin(tau) * walkBlend;
+        sceneModel.legL.MOVE_MATRIX = LIBS.makePivotTransform(0, 0.75, 0, legSwing, 0, -legSplay, 1, 1, 1, 0, 0, 0);
+        sceneModel.legR.MOVE_MATRIX = LIBS.makePivotTransform(0, 0.75, 0, -legSwing, 0, legSplay, 1, 1, 1, 0, 0, 0);
+
+        var ankleL   = -0.55 * legSwing;
+        var ankleR   =  0.55 * legSwing;
+        var contactL = Math.max(0, -Math.sin(tau)) * walkBlend;
+        var contactR = Math.max(0,  Math.sin(tau)) * walkBlend;
+        var footSquashL = 1.0 - 0.45 * contactL, footSpreadL = 1.0 + 0.25 * contactL;
+        var footSquashR = 1.0 - 0.45 * contactR, footSpreadR = 1.0 + 0.25 * contactR;
+        sceneModel.footL.MOVE_MATRIX = LIBS.makePivotTransform(0, -0.08, 0, ankleL, 0, 0, footSpreadL, footSquashL, footSpreadL, 0, 0, 0);
+        sceneModel.footR.MOVE_MATRIX = LIBS.makePivotTransform(0, -0.08, 0, ankleR, 0, 0, footSpreadR, footSquashR, footSpreadR, 0, 0, 0);
+
+        var wingFlap = 0.26 * Math.cos(tau) * walkBlend;
+        sceneModel.wingL.MOVE_MATRIX = LIBS.makePivotTransformAxis(0, 0.5625, 0,  0.75, 0.30, 0.58,  wingFlap, 1, 1, 1, 0, 0, 0);
+        sceneModel.wingR.MOVE_MATRIX = LIBS.makePivotTransformAxis(0, 0.5625, 0, -0.75, 0.30, 0.58, -wingFlap, 1, 1, 1, 0, 0, 0);
+
+        var tailWag = 0.22 * Math.sin(tau) * walkBlend;
+        sceneModel.tail.MOVE_MATRIX = LIBS.makePivotTransformAxis(0, -0.11, -0.52, 0.35, 1.0, 0.40, tailWag, 1, 1, 1, 0, 0, 0);
+
+        var headBobZ  =  0.045 * (1.0 - Math.cos(2 * tau)) * walkBlend;
+        var headNodX  =  0.050 * Math.sin(2 * tau) * walkBlend;
+        var headRollZ = -0.45 * waddleZ;
+        sceneModel.head.MOVE_MATRIX = LIBS.makePivotTransform(0, -0.5, 0, headNodX, 0, headRollZ, 1, 1, 1, 0, 0, headBobZ);
+
+        gl.useProgram(sceneProg);
+        gl.uniformMatrix4fv(s_Pmat, false, window.getPr());
+        gl.uniformMatrix4fv(s_Vmat, false, window.getV());
+
+        sceneModel.root.render(root);
+
+        if (window.pg) gl.useProgram(window.pg);
+    };
+})();
+
+if (!window.MASTER_SCENE) {
+    window.addEventListener('load', main);
+}

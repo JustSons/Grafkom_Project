@@ -1,8 +1,7 @@
 /* main.js - Karakter anjing (Elsa) dengan WebGL: ellipsoid + cone + kurva Bezier */
 (function () {
   const canvas = document.getElementById('glcanvas');
-  const gl = canvas.getContext('webgl');
-  if (!gl) { alert('WebGL tidak didukung'); return; }
+  let gl = canvas ? canvas.getContext('webgl') : null;
 
   const VS = `
     attribute vec3 aPos; attribute vec3 aNorm;
@@ -46,34 +45,32 @@
       col = mix(col, mc, mk);
       gl_FragColor = vec4(col, 1.0);
     }`;
-  const prog = createProgram(gl, VS, FS);
-  gl.useProgram(prog);
-  const aPos = gl.getAttribLocation(prog, 'aPos'), aNorm = gl.getAttribLocation(prog, 'aNorm');
-  const uModel = gl.getUniformLocation(prog, 'uModel'), uVP = gl.getUniformLocation(prog, 'uViewProj');
-  const uNM = gl.getUniformLocation(prog, 'uNormalMat'), uColor = gl.getUniformLocation(prog, 'uColor');
-  const uEye = gl.getUniformLocation(prog, 'uEye'), uMouth = gl.getUniformLocation(prog, 'uMouth');
-  gl.enableVertexAttribArray(aPos); gl.enableVertexAttribArray(aNorm);
-  gl.enable(gl.DEPTH_TEST);
 
-  /* ---- Mesh ---- */
-  const ellipsoid = createMesh(gl, Geo.ellipsoid());
-  const cone = createMesh(gl, Geo.cone());
-  const coneFrustum = createMesh(gl, Geo.cone(32, 0.8)); // kerucut terpotong (pangkal telinga)
-  // kaki: kurva Bezier melengkung (relatif terhadap pinggul), tebal & pendek
-  const legTube = createMesh(gl, Geo.bezierTube(
-    [[0, 0, 0], [0, -0.18, 0.06], [0, -0.34, -0.04], [0, -0.5, 0.0]], t => 0.15 - 0.045 * t));
-  const hindLegTube = createMesh(gl, Geo.bezierTube(
-    [[0, 0, 0], [0, -0.18, -0.08], [0, -0.34, 0.05], [0, -0.5, 0.0]], t => 0.19 - 0.08 * t));
-  // ekor: tonjolan pendek berkurva ke atas (relatif terhadap pangkal ekor)
-  const tailTube = createMesh(gl, Geo.bezierTube(
-    [[0, 0, 0], [0, 0.04, -0.14], [0, 0.2, -0.2], [0, 0.36, -0.1]],
-    t => Math.max(0.02, 0.075 * (1 - 0.6 * t) * Math.sqrt(Math.max(0, 1 - Math.pow(Math.max(0, (t - 0.85) / 0.15), 2))))));
+  let prog, aPos, aNorm, uModel, uVP, uNM, uColor, uEye, uMouth;
+  let ellipsoid, cone, coneFrustum, legTube, hindLegTube, tailTube, headMesh, chinBowl;
 
-  // kepala: SATU permukaan utuh hasil pahatan satu ellipsoid -- moncong, kantong mulut (senyum) dan dagu rata ikut permukaan yang sama
-  const headMesh = createMesh(gl, Geo.sculptedHead(150, 220, { mouth: { smile: 0.75 } }));
+  function initElsaMeshes(_gl) {
+    if (prog) return;
+    gl = _gl;
+    prog = createProgram(gl, VS, FS);
+    aPos = gl.getAttribLocation(prog, 'aPos'); aNorm = gl.getAttribLocation(prog, 'aNorm');
+    uModel = gl.getUniformLocation(prog, 'uModel'); uVP = gl.getUniformLocation(prog, 'uViewProj');
+    uNM = gl.getUniformLocation(prog, 'uNormalMat'); uColor = gl.getUniformLocation(prog, 'uColor');
+    uEye = gl.getUniformLocation(prog, 'uEye'); uMouth = gl.getUniformLocation(prog, 'uMouth');
 
-  // dagu = MANGKUK dalam: belahan bawah ellipsoid (permukaan luar = dagu, permukaan dalam = bagian dalam mulut)
-  const chinBowl = createMesh(gl, Geo.ellipsoidPatch([0, -1, 0], [0, 0, 1], 0, Math.PI / 2, 0, 2 * Math.PI, 24, 56));
+    ellipsoid = createMesh(gl, Geo.ellipsoid());
+    cone = createMesh(gl, Geo.cone());
+    coneFrustum = createMesh(gl, Geo.cone(32, 0.8));
+    legTube = createMesh(gl, Geo.bezierTube(
+      [[0, 0, 0], [0, -0.18, 0.06], [0, -0.34, -0.04], [0, -0.5, 0.0]], t => 0.15 - 0.045 * t));
+    hindLegTube = createMesh(gl, Geo.bezierTube(
+      [[0, 0, 0], [0, -0.18, -0.08], [0, -0.34, 0.05], [0, -0.5, 0.0]], t => 0.19 - 0.08 * t));
+    tailTube = createMesh(gl, Geo.bezierTube(
+      [[0, 0, 0], [0, 0.04, -0.14], [0, 0.2, -0.2], [0, 0.36, -0.1]],
+      t => Math.max(0.02, 0.075 * (1 - 0.6 * t) * Math.sqrt(Math.max(0, 1 - Math.pow(Math.max(0, (t - 0.85) / 0.15), 2))))));
+    headMesh = createMesh(gl, Geo.sculptedHead(150, 220, { mouth: { smile: 0.75 } }));
+    chinBowl = createMesh(gl, Geo.ellipsoidPatch([0, -1, 0], [0, 0, 1], 0, Math.PI / 2, 0, 2 * Math.PI, 24, 56));
+  }
 
   function draw(mesh, M, color, mouth) {
     gl.uniformMatrix4fv(uModel, false, M);
@@ -88,93 +85,111 @@
 
   const { translation: T, scaling: S, rotX, rotY, rotZ, chain } = Mat4;
   const FUR = [1, 1, 0.999], FUR_D = [0.56, 0.45, 0.35], DARK = [0.08, 0.06, 0.05];
-  const TONGUE = [0.93, 0.5, 0.52], EAR_IN = [0.78, 0.45, 0.42], CAVITY = [0.03, 0.015, 0.015], FUR_L = [0.86, 0.72, 0.57], MOUTH = [0.18, 0.08, 0.07], SHADOW = [0.12, 0.12, 0.12];
+  const TONGUE = [0.93, 0.5, 0.52], SHADOW = [0.12, 0.12, 0.12];
 
-  /* ---- Kontrol ---- */
-  let walking = true, amp = 1, time = 0, last = performance.now();
-  let yaw = 0.6, pitch = 0.18, dist = 5.0, drag = false, lx = 0, ly = 0;
-  document.getElementById('walk').addEventListener('change', e => (walking = e.target.checked));
-  canvas.addEventListener('mousedown', e => { drag = true; lx = e.clientX; ly = e.clientY; });
-  window.addEventListener('mouseup', () => (drag = false));
-  window.addEventListener('mousemove', e => {
-    if (!drag) return;
-    yaw -= (e.clientX - lx) * 0.01; pitch = Math.min(1.3, Math.max(-0.1, pitch + (e.clientY - ly) * 0.01));
-    lx = e.clientX; ly = e.clientY;
-  });
-  canvas.addEventListener('wheel', e => { e.preventDefault(); dist = Math.min(10, Math.max(2.5, dist + e.deltaY * 0.004)); }, { passive: false });
-
-  function resize() {
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = canvas.clientWidth * dpr; canvas.height = canvas.clientHeight * dpr;
-    gl.viewport(0, 0, canvas.width, canvas.height);
-  }
-  window.addEventListener('resize', resize); resize();
-
-  /* ---- Render ---- */
-  function frame(now) {
-    const dt = (now - last) / 1000; last = now; time += dt;
-    amp += ((walking ? 1 : 0) - amp) * Math.min(1, dt * 6);
-    const w = 6 * time;
-
-    gl.clearColor(0.93, 0.95, 0.97, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-    const eye = [
-      dist * Math.cos(pitch) * Math.sin(yaw), 0.9 + dist * Math.sin(pitch), dist * Math.cos(pitch) * Math.cos(yaw)];
-    const vp = Mat4.mul(Mat4.perspective(0.9, canvas.width / canvas.height, 0.1, 50),
-      Mat4.lookAt(eye, [0, 0.9, 0], [0, 1, 0]));
-    gl.uniformMatrix4fv(uVP, false, vp); gl.uniform3fv(uEye, eye);
-
-    // bayangan (ellipsoid pipih)
-    draw(ellipsoid, chain(T(0, 0.005, -0.1), S(0.75, 0.005, 1.15)), SHADOW);
-
+  function renderElsaBody(root, w, amp, t) {
+    draw(ellipsoid, chain(root, T(0, 0.005, -0.1), S(0.75, 0.005, 1.15)), SHADOW);
     const bob = 0.025 * amp * Math.sin(2 * w);
-    const root = T(0, bob, 0);
+    const rootElsa = chain(root, T(0, bob, 0));
 
-    // ===== BADAN (section): badan utama, dada, leher penyambung, pangkal ekor =====
-    draw(ellipsoid, chain(root, T(0, 0.85, -0.14), S(0.44, 0.4, 0.6)), FUR);          // badan utama
-    draw(ellipsoid, chain(root, T(0, 1, 0.25), S(0.44, 0.5, 0.45)), FUR);           // dada
-    draw(tailTube, chain(root, T(0, 0.98, -0.66), rotY(0.5 * Math.sin(8 * time)), rotX(0.1)), FUR); // ekor (kurva Bezier)
+    draw(ellipsoid, chain(rootElsa, T(0, 0.85, -0.14), S(0.44, 0.4, 0.6)), FUR);
+    draw(ellipsoid, chain(rootElsa, T(0, 1, 0.25), S(0.44, 0.5, 0.45)), FUR);
+    draw(tailTube, chain(rootElsa, T(0, 0.98, -0.66), rotY(0.5 * Math.sin(8 * t)), rotX(0.1)), FUR);
 
-    // ===== KAKI (section): bahu/paha + kaki bawah (kurva Bezier) + telapak; gaya jalan diagonal =====
     [[0.25, 0.36, 0, false], [-0.25, 0.36, Math.PI, false], [0.26, -0.46, Math.PI, true], [-0.26, -0.46, 0, true]].forEach(([x, z, ph, hind]) => {
       const sx = Math.sign(x);
-      const hip = chain(root, T(x, 0.56, z), rotX(0.45 * amp * Math.sin(w + ph)));
-      draw(hind ? hindLegTube : legTube, hip, FUR);                                              // kaki bawah
-      draw(ellipsoid, chain(hip, T(0, -0.5, 0.07), S(0.125, 0.055, 0.17)), FUR);                  // telapak
-      if (hind) draw(ellipsoid, chain(hip, T(0.005 * sx, 0.14, -0.01), S(0.2, 0.3, 0.3)), FUR); // paha
-      else draw(ellipsoid, chain(hip, T(0.03 * sx, 0.17, 0.0), S(0.2, 0.3, 0.2)), FUR);         // bahu
+      const hip = chain(rootElsa, T(x, 0.56, z), rotX(0.45 * amp * Math.sin(w + ph)));
+      draw(hind ? hindLegTube : legTube, hip, FUR);
+      draw(ellipsoid, chain(hip, T(0, -0.5, 0.07), S(0.125, 0.055, 0.17)), FUR);
+      if (hind) draw(ellipsoid, chain(hip, T(0.005 * sx, 0.14, -0.01), S(0.2, 0.3, 0.3)), FUR);
+      else draw(ellipsoid, chain(hip, T(0.03 * sx, 0.17, 0.0), S(0.2, 0.3, 0.2)), FUR);
     });
 
-    // ===== KEPALA (section-section, pivot di leher) =====
     const P = [0, 1.2, 0.4];
-    const head = chain(root, T(0, 0.3, -0.27), T(...P), rotX(0.05 * amp * Math.sin(2 * w + 1)), rotY(0.08 * Math.sin(time * 0.9)), T(-P[0], -P[1], -P[2]));
+    const head = chain(rootElsa, T(0, 0.3, -0.27), T(...P), rotX(0.05 * amp * Math.sin(2 * w + 1)), rotY(0.08 * Math.sin(t * 0.9)), T(-P[0], -P[1], -P[2]));
 
-    // -- section 1: KEPALA = satu permukaan utuh; mulut = kantong cekung dengan tepi membulat (bukan lembaran) --
     draw(headMesh, chain(head, T(0, 1.62-0.3, 0.63), S(0.5, 0.48, 0.43)), FUR, 1);
-
-    // -- moncong sudah menjadi tonjolan kepala; hidung = ellipsoid kecil yang setengah tertanam di ujung moncong --
-    draw(ellipsoid, chain(head, T(0, 1.7-0.3, 1.18), S(0.1, 0.07, 0.075)), DARK);         // hidung
-    draw(ellipsoid, chain(head, T(0.17, 1.78-0.3, 1.0), S(0.06, 0.062, 0.05)), DARK);      // mata
+    draw(ellipsoid, chain(head, T(0, 1.7-0.3, 1.18), S(0.1, 0.07, 0.075)), DARK);
+    draw(ellipsoid, chain(head, T(0.17, 1.78-0.3, 1.0), S(0.06, 0.062, 0.05)), DARK);
     draw(ellipsoid, chain(head, T(-0.17, 1.78-0.3, 1.0), S(0.06, 0.062, 0.05)), DARK);
-
-    // -- dagu: mangkuk dalam dengan dinding depan hampir tegak (terlihat dari depan), dimiringkan sedikit ke depan sehingga tepi depannya melengkung U (senyum) --
     draw(chinBowl, chain(head, T(0, 1.25, 0.79), rotX(0.4), S(0.3, 0.42, 0.32)), FUR, 5);
+    draw(ellipsoid, chain(head, T(0, 1.2, 0.9 + 0.02 * Math.sin(5 * t)), rotX(0.35), S(0.1, 0.03, 0.26)), TONGUE);
 
-    // -- lidah terletak di dalam mangkuk dan menjulur melewati tepi depan --
-    draw(ellipsoid, chain(head, T(0, 1.2, 0.9 + 0.02 * Math.sin(5 * time)), rotX(0.35), S(0.1, 0.03, 0.26)), TONGUE);
-
-    // -- telinga: 2 segmen (pangkal frustum + ujung kerucut), radius sambungan sama sehingga mulus,
-    //    pangkal lebar tertanam di kepala; bagian dalam pink dilukis di pangkal --
-    const twitch = 0.06 * Math.sin(3 * time);
+    const twitch = 0.06 * Math.sin(3 * t);
     [1, -1].forEach(sx => {
       const base = chain(head, T(0.21 * sx, 1.88-0.3, 0.56), rotZ(-sx * (0.26 + twitch)));
-      const tip = chain(base, T(0, 0.2, 0));      // sambung di puncak frustum (radius sama)
-      draw(coneFrustum, chain(base, S(0.17, 0.2, 0.13)), FUR, 3);  // segmen 1: pangkal
-      draw(cone, chain(tip, S(0.136, 0.28, 0.104)), FUR, 4);        // segmen 2: ujung (pink menerus di bagian bawah)
+      const tip = chain(base, T(0, 0.2, 0));
+      draw(coneFrustum, chain(base, S(0.17, 0.2, 0.13)), FUR, 3);
+      draw(cone, chain(tip, S(0.136, 0.28, 0.104)), FUR, 4);
     });
+  }
 
+  // EXPORT UNTUK MASTER SCENE:
+  window.drawElsa = function(gfx, root, pose, t, o) {
+    if (pose === 'hide') return;
+    const _gl = window.gl || (gfx && gfx.gl);
+    if (!_gl) return;
+    initElsaMeshes(_gl);
+
+    gl.useProgram(prog);
+    gl.enableVertexAttribArray(aPos);
+    gl.enableVertexAttribArray(aNorm);
+
+    const vp = Mat4.mul(window.getPr(), window.getV());
+    gl.uniformMatrix4fv(uVP, false, vp);
+    gl.uniform3fv(uEye, [0, 2, 10]);
+
+    o = o || {};
+    const ph = o.ph || 0;
+    const isStep = (pose === 'step');
+    renderElsaBody(root, ph, isStep ? 1 : 0, t);
+
+    if (window.pg) gl.useProgram(window.pg);
+  };
+
+  // STANDALONE VIEWER
+  if (canvas && !window.MASTER_SCENE) {
+    if (!gl) { alert('WebGL tidak didukung'); return; }
+    initElsaMeshes(gl);
+    gl.useProgram(prog);
+    gl.enableVertexAttribArray(aPos); gl.enableVertexAttribArray(aNorm);
+    gl.enable(gl.DEPTH_TEST);
+
+    let walking = true, amp = 1, time = 0, last = performance.now();
+    let yaw = 0.6, pitch = 0.18, dist = 5.0, drag = false, lx = 0, ly = 0;
+    const walkEl = document.getElementById('walk');
+    if (walkEl) walkEl.addEventListener('change', e => (walking = e.target.checked));
+    canvas.addEventListener('mousedown', e => { drag = true; lx = e.clientX; ly = e.clientY; });
+    window.addEventListener('mouseup', () => (drag = false));
+    window.addEventListener('mousemove', e => {
+      if (!drag) return;
+      yaw -= (e.clientX - lx) * 0.01; pitch = Math.min(1.3, Math.max(-0.1, pitch + (e.clientY - ly) * 0.01));
+      lx = e.clientX; ly = e.clientY;
+    });
+    canvas.addEventListener('wheel', e => { e.preventDefault(); dist = Math.min(10, Math.max(2.5, dist + e.deltaY * 0.004)); }, { passive: false });
+
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = canvas.clientWidth * dpr; canvas.height = canvas.clientHeight * dpr;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    window.addEventListener('resize', resize); resize();
+
+    function frame(now) {
+      const dt = (now - last) / 1000; last = now; time += dt;
+      amp += ((walking ? 1 : 0) - amp) * Math.min(1, dt * 6);
+      const w = 6 * time;
+
+      gl.clearColor(0.93, 0.95, 0.97, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      const eye = [dist * Math.cos(pitch) * Math.sin(yaw), 0.9 + dist * Math.sin(pitch), dist * Math.cos(pitch) * Math.cos(yaw)];
+      const vp = Mat4.mul(Mat4.perspective(0.9, canvas.width / canvas.height, 0.1, 50), Mat4.lookAt(eye, [0, 0.9, 0], [0, 1, 0]));
+      gl.uniformMatrix4fv(uVP, false, vp); gl.uniform3fv(uEye, eye);
+
+      renderElsaBody(Mat4.identity(), w, amp, time);
+      requestAnimationFrame(frame);
+    }
     requestAnimationFrame(frame);
   }
-  requestAnimationFrame(frame);
 })();
