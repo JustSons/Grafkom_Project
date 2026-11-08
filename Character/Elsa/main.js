@@ -91,13 +91,32 @@
   // Skala seluruh badan Elsa (1 = ukuran semula). 0.8 = 20% lebih kecil; kaki tetap menapak karena skala dari titik tanah (root)
   const ELSA_SCALE = 0.5;
 
-  function renderElsaBody(root, w, amp, t) {
+  function rotArbitraryAxis(angle, x, y, z) {
+    const length = Math.hypot(x, y, z);
+    x /= length; y /= length; z /= length;
+    const c = Math.cos(angle), s = Math.sin(angle), k = 1 - c;
+    const m = Mat4.identity();
+    m[0] = c + x * x * k;     m[4] = x * y * k - z * s; m[8] = x * z * k + y * s;
+    m[1] = y * x * k + z * s; m[5] = c + y * y * k;     m[9] = y * z * k - x * s;
+    m[2] = z * x * k - y * s; m[6] = z * y * k + x * s; m[10] = c + z * z * k;
+    return m;
+  }
+
+  function shrinkElsa(elapsed) {
+    const progress = Math.max(0, Math.min(1, elapsed));
+    const smooth = progress * progress * (3 - 2 * progress);
+    return 1 - 0.1 * smooth;
+  }
+  window.shrinkElsa = shrinkElsa;
+
+  function renderElsaBody(root, w, amp, t, scale = 1) {
     const bob = 0.025 * amp * Math.sin(2 * w);
-    const rootElsa = chain(root, S(ELSA_SCALE, ELSA_SCALE, ELSA_SCALE), T(0, bob, 0));   // skala dulu, lalu gerak naik-turun (ikut mengecil)
+    const bodyScale = ELSA_SCALE * scale;
+    const rootElsa = chain(root, S(bodyScale, bodyScale, bodyScale), T(0, bob, 0));   // skala dulu, lalu gerak naik-turun (ikut mengecil)
 
     draw(ellipsoid, chain(rootElsa, T(0, 0.85, -0.14), S(0.44, 0.4, 0.6)), FUR);
     draw(ellipsoid, chain(rootElsa, T(0, 1, 0.25), S(0.44, 0.5, 0.45)), FUR);
-    draw(tailTube, chain(rootElsa, T(0, 0.98, -0.66), rotY(0.5 * Math.sin(8 * t)), rotX(0.1)), FUR);
+    draw(tailTube, chain(rootElsa, T(0, 0.98, -0.66), rotArbitraryAxis(0.5 * Math.sin(8 * t), 0.2, 1, 0.35), rotX(0.1)), FUR);
 
     [[0.25, 0.36, 0, false], [-0.25, 0.36, Math.PI, false], [0.26, -0.46, Math.PI, true], [-0.26, -0.46, 0, true]].forEach(([x, z, ph, hind]) => {
       const sx = Math.sign(x);
@@ -145,8 +164,9 @@
 
     o = o || {};
     const ph = o.ph || 0;
+    const scale = typeof o.scale === 'number' ? o.scale : 1;
     const isStep = (pose === 'step');
-    renderElsaBody(root, ph, isStep ? 1 : 0, t);
+    renderElsaBody(root, ph, isStep ? 1 : 0, t, scale);
 
     if (window.pg) gl.useProgram(window.pg);
   };
