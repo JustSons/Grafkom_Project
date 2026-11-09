@@ -1,13 +1,11 @@
-/* main.js - Karakter Apex Predator (R.E.P.O.) dengan WebGL: ellipsoid + paraboloid + cone + cylinder + kurva Bezier 3D
-   Mesh dibuat sekali, lalu digambar lewat draw(mesh, M, color) dengan chain(...) transformasi.
-   Bentuk model (generator geometri, ukuran, pose, animasi, transisi mode monster) memakai helper dari libs.js. */
+/* main.js - Karakter Apex Predator (R.E.P.O.) dengan WebGL: ellipsoid + paraboloid + cone + cylinder + kurva Bezier 3D*/
 (function () {
   'use strict';
   const PI = Math.PI;
   let gl = null;
   const { identity, mul, perspective, lookAt, translation: T, scaling: S, rotX, rotY, rotZ, chain, pivot, pivotAxis } = LIBS;
 
-  /* ================= GEOMETRI (rumus asli): {positions, normals, indices} datar ================= */
+  /* GEOMETRI */
   const unitN = n => {
     for (let k = 0; k < n.length; k += 3) {
       const l = Math.hypot(n[k], n[k + 1], n[k + 2]);
@@ -25,7 +23,7 @@
     return [0, 1, 2].map(k => a * P[0][k] + b * P[1][k] + c * P[2][k] + d * P[3][k]);
   };
 
-  // ELLIPSOID (badan, kepala, mata, telapak, jari); taperTop/taperBottom = bentuk organik
+  // ELLIPSOID (badan, kepala, mata, telapak, jari)
   function generateEllipsoid(a, b, c, stacks, slices, taperTop = 0, taperBottom = 0) {
     const p = [], n = [];
     for (let i = 0; i <= stacks; i++) {
@@ -40,7 +38,7 @@
     return { positions: p, normals: unitN(n), indices: gridIdx(stacks + 1, slices + 1) };
   }
 
-  // ELLIPTIC PARABOLOID (paruh, rahang, sayap): x = r cos a, y = r^2, z = r sin b, ujung (r = 0) di titik asal
+  // ELLIPTIC PARABOLOID (paruh, rahang, sayap)
   function generateEllipticParaboloid(a, b, rMax, rings, segments) {
     const p = [], n = [];
     for (let i = 0; i <= rings; i++) {
@@ -57,7 +55,7 @@
     return { positions: p, normals: unitN(n), indices: idx };
   }
 
-  // CONE (taring): pangkal di y = 0, puncak di y = height
+  // CONE (taring)
   function generateCone(radius, height, segments) {
     const p = [0, height, 0, 0, 0, 0], n = [0, 1, 0, 0, -1, 0], idx = [], slope = radius / Math.max(height, 1e-4);
     for (let j = 0; j <= segments; j++) { const th = j / segments * 2 * PI, c = Math.cos(th), s = Math.sin(th); p.push(radius * c, 0, radius * s); n.push(c, slope, s) }
@@ -65,7 +63,7 @@
     return { positions: p, normals: unitN(n), indices: idx };
   }
 
-  // CYLINDER (kaki): y = 0 sampai y = height
+  // CYLINDER (kaki)
   function generateCylinder(radius, height, segments) {
     const p = [0, 0, 0], n = [0, -1, 0], idx = [], bot = 1, topC = segments + 2, top = topC + 1;
     for (let j = 0; j <= segments; j++) { const th = j / segments * 2 * PI, c = Math.cos(th), s = Math.sin(th); p.push(radius * c, 0, radius * s); n.push(c, 0, s) }
@@ -75,7 +73,7 @@
     return { positions: p, normals: unitN(n), indices: idx };
   }
 
-  // normal halus dari selisih tetangga grid; flip = arah normal dibalik (dipakai kepala, seperti kode asli)
+
   function gridMesh(grid, flip) {
     const R = grid.length - 1, C = grid[0].length - 1, p = [], n = [];
     for (let i = 0; i <= R; i++) for (let j = 0; j <= C; j++) {
@@ -87,7 +85,7 @@
     return { positions: p, normals: n, indices: gridIdx(R + 1, C + 1) };
   }
 
-  // KEPALA: ellipsoid, bagian belakang (cosT < 0) ditarik jadi punuk lewat Bezier kubik 1D
+  // KEPALA: ellipsoid
   function generateDuckHeadWithBezierBack(a, b, c, stacks, slices, backBump, bumpY) {
     const grid = [];
     for (let i = 0; i <= stacks; i++) {
@@ -107,7 +105,7 @@
     const g = gridMesh(grid, true); unitN(g.normals); return g;
   }
 
-  // EKOR: dua kurva Bezier 3D (dorsal & ventral) disapu jadi ekor bebek bervolume + penutup pangkal & ujung
+  // EKOR: dua kurva Bezier 3D
   function generateBezierDuckTail(Top, Bot, baseWidth, tipWidth, segments, slices) {
     const grid = [];
     for (let i = 0; i <= segments; i++) {
@@ -127,7 +125,6 @@
     unitN(g.normals); return g;
   }
 
-  // tempatkan sebuah geometri dengan matriks m (kolom-mayor) dan gabungkan beberapa jadi satu (taring per rahang = 1 mesh)
   const place = (g, m) => {
     const p = [], n = [];
     for (let k = 0; k < g.positions.length; k += 3) {
@@ -137,15 +134,14 @@
     }
     return { positions: p, normals: n, indices: g.indices };
   };
+  // gabungkan beberapa jadi satu (taring per rahang = 1 mesh)
   const merge = list => {
     const p = [], n = [], idx = [];
     for (const g of list) { const o = p.length / 3; g.positions.forEach(x => p.push(x)); g.normals.forEach(x => n.push(x)); g.indices.forEach(i => idx.push(i + o)) }
     return { positions: p, normals: n, indices: idx };
   };
 
-  /* ================= SHADER =================
-     Pencahayaan = persis yang dulu "dipanggang" ke warna vertex (ambient .64 + diffuse .36 + fill), dihitung di ruang lokal mesh.
-     uTint dipakai adegan untuk meredupkan sesuai lampu lorong (standalone: putih). */
+  // SHADER
   const VS = `
     attribute vec3 aPos; attribute vec3 aNorm;
     uniform mat4 uModel, uViewProj;
@@ -175,16 +171,15 @@
     return m;
   }
 
-  /* ================= MESH & WARNA ================= */
   const C = {
     body: [0.98, 0.82, 0.12], belly: [1.00, 0.88, 0.24], crest: [0.98, 0.80, 0.10], eye: [0.02, 0.02, 0.02],
     beak: [0.96, 0.78, 0.50], jaw: [0.80, 0.16, 0.24], mouth: [0.45, 0.12, 0.12], fang: [0.98, 0.98, 0.90],
     arm: [0.98, 0.82, 0.12], leg: [0.94, 0.58, 0.12], foot: [0.94, 0.60, 0.14], toe: [0.92, 0.56, 0.12], tail: [0.98, 0.82, 0.12]
   };
-  const JAW_OPEN_UP = 0.30, JAW_OPEN_DOWN = 0.40;          // rad, bukaan rahang predator
+  const JAW_OPEN_UP = 0.30, JAW_OPEN_DOWN = 0.40;          // rad, bukaan rahang predator (untuk rotasi seberapa kebuka mulutnya)
   const D_UP = 2.15, D_DOWN = 1.98;                        // panjang rahang atas / bawah (ke depan, +Z)
 
-  // rahang buaya: cangkang paraboloid panjang + deretan taring kerucut (sudah digabung jadi 1 mesh)
+  // rahang predator
   function buildJaw(isUpper) {
     const D = isUpper ? D_UP : D_DOWN, rMax = Math.sqrt(D), a = (isUpper ? 0.62 : 0.54) / rMax, b = (isUpper ? 0.30 : 0.22) / rMax, dirY = isUpper ? -1 : 1;
     const teeth = [];
@@ -247,28 +242,26 @@
     gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
   }
 
-  /* ================= GAMBAR + ANIMASI =================
-     root = matriks induk. p: tau (fase langkah), wb (bobot jalan 0..1), g (penguat langkah), pred (0 = paruh bebek, 1 = monster),
-     roar / atk (0..1, dipakai adegan), lean (condong maju), life (napas saat diam, 0 = mati), t (waktu). */
+  // RENDERING
   function renderApexBody(root, p) {
     const { tau, wb, g, pred, roar, atk, lean, life, t } = p;
     const a = wb * g, sn = Math.sin(tau), cs = Math.cos(tau), show = pred > 0.05;
 
-    // BADAN: bobbing, goyang panggul (waddle), pelvis twist; skala tetap 1
+    // BADAN
     const bobY = -0.045 * Math.cos(2 * tau) * a + 0.012 * Math.sin(2 * t) * (1 - wb) * life;
     const waddleZ = 0.055 * sn * a, twistY = 0.030 * cs * wb;
     const body = chain(root, T(0, 0.15, 0), pivot(0, 0, 0, lean + 0.30 * atk, twistY, waddleZ, 1, 1, 1, 0.018 * roar * Math.sin(45 * t), bobY, 0));
     draw(G.body, body, C.body);
     draw(G.belly, chain(body, T(0, -0.15, 0.44)), C.belly);
 
-    // KEPALA: pivot di leher; mengangguk, head bobbing, menengadah saat meraung
+    // KEPALA: pivot di leher
     const headBobZ = 0.045 * (1 - Math.cos(2 * tau)) * a, headNodX = 0.050 * Math.sin(2 * tau) * a - 0.35 * roar + 0.45 * atk;
     const head = chain(body, T(0, 1.42, 0), pivot(0, -0.5, 0, headNodX, 0, -0.45 * waddleZ, 1, 1, 1, 0, 0, headBobZ));
     draw(G.head, head, C.body);
     draw(G.eye, chain(head, T(-0.54, 0.08, 0.70), rotY(-0.22)), C.eye);
     draw(G.eye, chain(head, T(0.54, 0.08, 0.70), rotY(0.22)), C.eye);
 
-    // PARUH BEBEK (mode biasa): mengorbit pusat kepala naik/turun dan membenam saat pred 0 -> 1
+    // PARUH Biasa: mengorbit pusat kepala
     const BEAK_TILT = -PI * 0.48;
     const orbit = (y0, z0, ang, sink) => {
       const c = Math.cos(ang), s = Math.sin(ang), y = y0 * c + z0 * s, z = -y0 * s + z0 * c, k = 1 - sink / Math.hypot(y, z);
@@ -277,7 +270,7 @@
     draw(G.beakUpper, chain(head, orbit(-0.22, 1.44, 0.50 * pred, 0.10 * pred)), C.beak);
     draw(G.beakLower, chain(head, orbit(-0.36, 1.38, -0.45 * pred, 0.10 * pred)), C.beak);
 
-    // RAHANG PREDATOR (mode monster): engsel di sudut mulut, membuka sesuai pred (+ menganga saat meraung)
+    // RAHANG PREDATOR: pivot di sudut mulut
     if (show) {
       const upperJaw = chain(head, T(0, -0.16, 0.75), rotX(-(JAW_OPEN_UP * pred + 0.30 * roar * pred)));
       const lowerJaw = chain(head, T(0, -0.50, 0.75), rotX(JAW_OPEN_DOWN * pred + 0.25 * roar * pred));
@@ -298,11 +291,10 @@
     // EKOR (kurva Bezier 3D): rotasi sumbu sembarang (0.35, 1, 0.40), pivot di pangkal kurva
     draw(G.tail, chain(body, pivotAxis(0, -0.11, -0.52, 0.35, 1.0, 0.40, 0.22 * sn * a + 0.12 * Math.sin(9 * t) * roar, 1, 1, 1, 0, 0, 0)), C.tail);
 
-    // KAKI (pivot di pinggul) + TELAPAK & JARI (scaling: gepeng & melebar saat menapak)
+    // KAKI (pivot di pinggul) + TELAPAK & JARI (scaling: gepeng & melebar)
     const swing = 0.36 * sn * a, splay = 0.02 * sn * wb;
     const contactL = Math.max(0, sn) * wb, contactR = Math.max(0, -sn) * wb;
     const squashL = 1 - 0.45 * contactL, spreadL = 1 + 0.25 * contactL, squashR = 1 - 0.45 * contactR, spreadR = 1 + 0.25 * contactR;
-    // [x, ayun kaki, splay, ayun ankle, squash Y, melebar XZ] untuk kiri lalu kanan (kanan berlawanan fase)
     for (const [x, sw, sp, ank, sq, spr] of [[-0.34, swing, -splay, -0.55 * swing, squashL, spreadL], [0.34, -swing, splay, 0.55 * swing, squashR, spreadR]]) {
       const legStretch = 1 + 0.16 * (1 - sq) / 0.75;
       const leg = chain(body, T(x, -1.52, 0.05), pivot(0, 0.75, 0, sw, 0, sp, 1, 1, 1, 0, 0, 0));
@@ -316,12 +308,7 @@
     return { footSquash: Math.min(squashL, squashR), footSpread: Math.max(spreadL, spreadR) };
   }
 
-  /* ================= EXPORT UNTUK MASTER SCENE =================
-     drawApex(gfx, root, pose, t, o)   pose: 'idle' | 'roar' | 'run' | 'swat'
-       o.ph fase langkah (rad)  o.k amplitudo jalan 0..1  o.run langkah lebih besar  o.pred 0..1 mode monster
-       o.roar / o.atk 0..1  o.lit kecerahan lorong 0..1 (opsional, meredupkan saat lampu padam)
-     root = posisi + yaw + skala dari scene (menghadap +Z, lantai y = 0). Mengembalikan false bila belum bisa menggambar. */
-  const APEX_SCALE = 0.6; // ubah nilai ini untuk memperbesar atau memperkecil seluruh karakter
+  const APEX_SCALE = 0.6; // untuk memperbesar atau memperkecil seluruh karakter
   const S0 = 0.365, GROUND = 1.59;   // sedikit clearance agar kaki tidak menembus lantai saat berlari
   window.drawApex = function (gfx, root, pose, t, o) {
     const _gl = window.gl || (gfx && gfx.gl);
@@ -342,7 +329,7 @@
     if (window.pg) gl.useProgram(window.pg);
   };
 
-  /* ================= VIEWER STANDALONE (dilewati di master scene) ================= */
+  
   const canvas = document.getElementById('mycanvas');
   if (!canvas || window.MASTER_SCENE || typeof Environment !== 'undefined') return;
   function start() {
